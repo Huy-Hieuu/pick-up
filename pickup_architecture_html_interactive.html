@@ -1,0 +1,226 @@
+<h2 class="sr-only">Interactive PickUp system architecture diagram — React Native plus Rust Axum backend with phase filtering</h2>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  .wrap{font-family:var(--font-sans);max-width:680px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{font-size:12px;font-weight:500;padding:5px 12px;border-radius:20px;border:1px solid var(--color-border-tertiary);background:transparent;color:var(--color-text-secondary);cursor:pointer;transition:all .15s;user-select:none}
+  .tab:hover{border-color:var(--color-border-secondary)}
+  .tab.on{color:#fff;border-color:transparent}
+  .tab[data-p="all"].on{background:var(--color-text-primary)}
+  .tab[data-p="1"].on{background:#0F6E56}
+  .tab[data-p="2"].on{background:#534AB7}
+  .tab[data-p="3"].on{background:#993C1D}
+  .tab[data-p="4"].on{background:#854F0B}
+  @media(prefers-color-scheme:dark){
+    .tab[data-p="1"].on{background:#1D9E75}
+    .tab[data-p="2"].on{background:#7F77DD}
+    .tab[data-p="3"].on{background:#D85A30}
+    .tab[data-p="4"].on{background:#BA7517}
+  }
+  .layer{border:1px dashed var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:10px 12px 12px;margin-bottom:10px;position:relative}
+  .layer-label{font-size:11px;font-weight:500;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .grid{display:grid;gap:8px}
+  .grid3{grid-template-columns:repeat(3,1fr)}
+  .grid2{grid-template-columns:repeat(2,1fr)}
+  .grid5{grid-template-columns:repeat(5,1fr)}
+  .node{border-radius:var(--border-radius-md);padding:10px 12px;cursor:pointer;transition:all .2s;border:0.5px solid transparent;position:relative}
+  .node:hover{transform:translateY(-1px)}
+  .node .title{font-size:13px;font-weight:500;line-height:1.3}
+  .node .sub{font-size:11px;line-height:1.3;margin-top:2px}
+  .node .badge{position:absolute;top:4px;right:6px;font-size:9px;font-weight:600;padding:1px 5px;border-radius:8px}
+  .node.disabled{opacity:.25;pointer-events:none;transform:none}
+  .t1{background:#E1F5EE;border-color:#0F6E56}
+  .t1 .title{color:#085041}
+  .t1 .sub{color:#0F6E56}
+  .t1 .badge{background:#9FE1CB;color:#04342C}
+  .t2{background:#EEEDFE;border-color:#534AB7}
+  .t2 .title{color:#3C3489}
+  .t2 .sub{color:#534AB7}
+  .t2 .badge{background:#CECBF6;color:#26215C}
+  .t3{background:#FAECE7;border-color:#993C1D}
+  .t3 .title{color:#712B13}
+  .t3 .sub{color:#993C1D}
+  .t3 .badge{background:#F5C4B3;color:#4A1B0C}
+  .t4{background:#FAEEDA;border-color:#854F0B}
+  .t4 .title{color:#633806}
+  .t4 .sub{color:#854F0B}
+  .t4 .badge{background:#FAC775;color:#412402}
+  .tn{background:var(--color-background-secondary);border-color:var(--color-border-tertiary)}
+  .tn .title{color:var(--color-text-primary)}
+  .tn .sub{color:var(--color-text-secondary)}
+  @media(prefers-color-scheme:dark){
+    .t1{background:#085041;border-color:#5DCAA5} .t1 .title{color:#9FE1CB} .t1 .sub{color:#5DCAA5} .t1 .badge{background:#04342C;color:#9FE1CB}
+    .t2{background:#3C3489;border-color:#AFA9EC} .t2 .title{color:#CECBF6} .t2 .sub{color:#AFA9EC} .t2 .badge{background:#26215C;color:#CECBF6}
+    .t3{background:#712B13;border-color:#F0997B} .t3 .title{color:#F5C4B3} .t3 .sub{color:#F0997B} .t3 .badge{background:#4A1B0C;color:#F5C4B3}
+    .t4{background:#633806;border-color:#EF9F27} .t4 .title{color:#FAC775} .t4 .sub{color:#EF9F27} .t4 .badge{background:#412402;color:#FAC775}
+  }
+  .conn{display:flex;justify-content:center;align-items:center;padding:4px 0;color:var(--color-text-tertiary);font-size:11px;gap:6px}
+  .conn-line{width:1px;height:18px;background:var(--color-border-secondary)}
+  .conn-arrow{font-size:10px}
+  .conn-label{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);letter-spacing:.3px}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md)}
+  .legend-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--color-text-tertiary)}
+  .legend-dot{width:8px;height:8px;border-radius:50%}
+  .full{grid-column:1/-1}
+</style>
+
+<div class="wrap">
+  <div class="tabs">
+    <div class="tab on" data-p="all" onclick="setP('all')">All phases</div>
+    <div class="tab" data-p="1" onclick="setP('1')">P1 — MVP</div>
+    <div class="tab" data-p="2" onclick="setP('2')">P2 — iterate</div>
+    <div class="tab" data-p="3" onclick="setP('3')">P3 — community</div>
+    <div class="tab" data-p="4" onclick="setP('4')">P4 — scale</div>
+  </div>
+
+  <div id="diagram">
+    <div class="layer">
+      <div class="layer-label">Client</div>
+      <div class="grid grid2">
+        <div class="node t1" data-p="1" onclick="sendPrompt('Detail the React Native mobile app structure for PickUp — Expo Router, screens, navigation, hooks, API client')">
+          <div class="badge">P1</div>
+          <div class="title">Mobile app</div>
+          <div class="sub">Expo + React Native</div>
+        </div>
+        <div class="node t2" data-p="2" onclick="sendPrompt('Design the court owner web portal — Vite React SPA, schedule management, booking dashboard')">
+          <div class="badge">P2</div>
+          <div class="title">Court owner portal</div>
+          <div class="sub">Vite + React SPA</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="conn"><div class="conn-line"></div><div class="conn-label">REST + WebSocket</div><div class="conn-line"></div></div>
+
+    <div class="layer">
+      <div class="layer-label">Rust backend — Axum</div>
+      <div class="grid grid3" style="margin-bottom:8px">
+        <div class="node tn full" data-p="1">
+          <div class="title">Router + middleware</div>
+          <div class="sub">CORS, JWT verify, request logging</div>
+        </div>
+      </div>
+      <div class="grid grid3" style="margin-bottom:8px">
+        <div class="node t1" data-p="1" onclick="sendPrompt('Design the Rust court service — Axum handlers, SQLx queries, slot locking with SELECT FOR UPDATE')">
+          <div class="badge">P1</div>
+          <div class="title">Court service</div>
+          <div class="sub">Booking + slot lock</div>
+        </div>
+        <div class="node t1" data-p="1" onclick="sendPrompt('Design the Rust game service — create/join game, WebSocket live updates, player matching')">
+          <div class="badge">P1</div>
+          <div class="title">Game service</div>
+          <div class="sub">Create + join + WS</div>
+        </div>
+        <div class="node t1" data-p="1" onclick="sendPrompt('Design the Rust payment service — bill split, Momo/ZaloPay webhook, payment tracking')">
+          <div class="badge">P1</div>
+          <div class="title">Payment service</div>
+          <div class="sub">Split + webhook</div>
+        </div>
+      </div>
+      <div class="grid grid3" style="margin-bottom:8px">
+        <div class="node t1" data-p="1" onclick="sendPrompt('Design Rust auth service — phone OTP, JWT issue/refresh, middleware extractor')">
+          <div class="badge">P1</div>
+          <div class="title">Auth service</div>
+          <div class="sub">OTP + JWT</div>
+        </div>
+        <div class="node t2" data-p="2" onclick="sendPrompt('Design Rust notification service — Expo push, game reminders, payment nudges via tokio cron')">
+          <div class="badge">P2</div>
+          <div class="title">Notification service</div>
+          <div class="sub">Push + cron jobs</div>
+        </div>
+        <div class="node t3" data-p="3" onclick="sendPrompt('Design Rust social service — player profiles, ratings, friend system, game history')">
+          <div class="badge">P3</div>
+          <div class="title">Social service</div>
+          <div class="sub">Ratings + friends</div>
+        </div>
+      </div>
+      <div class="grid grid3">
+        <div class="node tn" data-p="1">
+          <div class="title">Shared layer</div>
+          <div class="sub">AppState, errors, extractors</div>
+        </div>
+        <div class="node t4" data-p="4" onclick="sendPrompt('When and how to add Redis caching to the PickUp Rust backend — cache strategy for court availability')">
+          <div class="badge">P4</div>
+          <div class="title">Redis cache</div>
+          <div class="sub">Court availability</div>
+        </div>
+        <div class="node t4" data-p="4" onclick="sendPrompt('Design full-text search for PickUp — pg_trgm, tsvector, search service in Rust')">
+          <div class="badge">P4</div>
+          <div class="title">Search module</div>
+          <div class="sub">pg_trgm + tsvector</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="conn"><div class="conn-line"></div><div class="conn-label">SQLx (compile-time checked)</div><div class="conn-line"></div></div>
+
+    <div class="layer">
+      <div class="layer-label">Data layer</div>
+      <div class="grid grid3">
+        <div class="node t1" data-p="1" onclick="sendPrompt('Design the Postgres schema for PickUp — users, courts, slots, games, game_players, payments tables with SQLx migrations')">
+          <div class="badge">P1</div>
+          <div class="title">PostgreSQL</div>
+          <div class="sub">Core tables + migrations</div>
+        </div>
+        <div class="node t1" data-p="1">
+          <div class="badge">P1</div>
+          <div class="title">S3 / MinIO</div>
+          <div class="sub">Court photos, avatars</div>
+        </div>
+        <div class="node t4" data-p="4">
+          <div class="badge">P4</div>
+          <div class="title">Redis</div>
+          <div class="sub">Session + cache store</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="conn"><div class="conn-line"></div><div class="conn-label">External APIs</div><div class="conn-line"></div></div>
+
+    <div class="layer">
+      <div class="layer-label">Integrations</div>
+      <div class="grid grid5">
+        <div class="node t1" data-p="1" style="padding:6px 8px">
+          <div class="title" style="font-size:11px">Momo / ZaloPay</div>
+          <div class="sub" style="font-size:10px">Payments</div>
+        </div>
+        <div class="node t1" data-p="1" style="padding:6px 8px">
+          <div class="title" style="font-size:11px">SMS provider</div>
+          <div class="sub" style="font-size:10px">OTP delivery</div>
+        </div>
+        <div class="node t2" data-p="2" style="padding:6px 8px">
+          <div class="title" style="font-size:11px">Expo push</div>
+          <div class="sub" style="font-size:10px">Notifications</div>
+        </div>
+        <div class="node t1" data-p="1" style="padding:6px 8px">
+          <div class="title" style="font-size:11px">Google Maps</div>
+          <div class="sub" style="font-size:10px">Court location</div>
+        </div>
+        <div class="node t1" data-p="1" style="padding:6px 8px">
+          <div class="title" style="font-size:11px">Zalo deeplink</div>
+          <div class="sub" style="font-size:10px">Share games</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#1D9E75"></div>P1 MVP (wk 5-12)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7F77DD"></div>P2 iterate (wk 13-18)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D85A30"></div>P3 community (wk 19-24)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#BA7517"></div>P4 scale</div>
+  </div>
+</div>
+
+<script>
+let cur='all';
+function setP(p){
+  cur=p;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.p===p));
+  document.querySelectorAll('.node[data-p]').forEach(n=>{
+    const np=parseInt(n.dataset.p);
+    if(p==='all'){n.classList.remove('disabled')}
+    else{n.classList.toggle('disabled',np>parseInt(p))}
+  });
+}
+</script>

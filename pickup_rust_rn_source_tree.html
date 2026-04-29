@@ -1,0 +1,370 @@
+<h2 class="sr-only">PickUp monorepo source tree — React Native frontend plus Rust Axum backend, across 4 phases</h2>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  .wrap{font-family:var(--font-sans);max-width:680px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{font-size:12px;font-weight:500;padding:5px 12px;border-radius:20px;border:1px solid var(--color-border-tertiary);background:transparent;color:var(--color-text-secondary);cursor:pointer;transition:all .15s;user-select:none}
+  .tab:hover{border-color:var(--color-border-secondary)}
+  .tab.active{color:#fff;border-color:transparent}
+  .tab[data-p="1"].active{background:#0F6E56}
+  .tab[data-p="2"].active{background:#534AB7}
+  .tab[data-p="3"].active{background:#993C1D}
+  .tab[data-p="4"].active{background:#854F0B}
+  .tab[data-p="all"].active{background:var(--color-text-primary)}
+  @media(prefers-color-scheme:dark){
+    .tab[data-p="1"].active{background:#1D9E75}
+    .tab[data-p="2"].active{background:#7F77DD}
+    .tab[data-p="3"].active{background:#D85A30}
+    .tab[data-p="4"].active{background:#BA7517}
+  }
+  .legend{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .legend-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--color-text-tertiary)}
+  .legend-dot{width:8px;height:8px;border-radius:50%}
+  .tree{border:1px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden}
+  .row{display:flex;align-items:center;min-height:30px;padding:0 12px;font-size:13px;transition:background .1s;cursor:default}
+  .row:hover{background:var(--color-background-secondary)}
+  .row.sep{background:var(--color-background-secondary);border-top:1px solid var(--color-border-tertiary);border-bottom:1px solid var(--color-border-tertiary);min-height:28px;margin-top:2px}
+  .row.hidden{display:none}
+  .indent{flex-shrink:0}
+  .icon{width:16px;height:16px;flex-shrink:0;margin-right:5px;display:flex;align-items:center;justify-content:center}
+  .icon svg{width:13px;height:13px}
+  .fname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-primary);font-family:var(--font-mono);font-size:12px}
+  .folder-row .fname{font-family:var(--font-sans);font-weight:500;font-size:12.5px}
+  .desc{font-size:11px;color:var(--color-text-tertiary);margin-left:8px;white-space:nowrap;flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+  .badge{font-size:9px;font-weight:600;padding:1px 5px;border-radius:10px;margin-left:5px;flex-shrink:0;letter-spacing:.3px}
+  .badge.b1{background:#E1F5EE;color:#085041}
+  .badge.b2{background:#EEEDFE;color:#3C3489}
+  .badge.b3{background:#FAECE7;color:#712B13}
+  .badge.b4{background:#FAEEDA;color:#633806}
+  @media(prefers-color-scheme:dark){
+    .badge.b1{background:#085041;color:#9FE1CB}
+    .badge.b2{background:#3C3489;color:#CECBF6}
+    .badge.b3{background:#712B13;color:#F5C4B3}
+    .badge.b4{background:#633806;color:#FAC775}
+  }
+  .toggle{cursor:pointer;width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:3px;margin-right:2px}
+  .toggle:hover{background:var(--color-background-tertiary)}
+  .toggle svg{transition:transform .12s;width:10px;height:10px}
+  .toggle.collapsed svg{transform:rotate(-90deg)}
+  .stats{display:flex;gap:14px;margin-top:10px;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);font-size:11px;color:var(--color-text-secondary);flex-wrap:wrap}
+  .stat-val{font-weight:500;color:var(--color-text-primary);font-family:var(--font-mono)}
+  .section-label{font-size:11px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.5px}
+</style>
+
+<div class="wrap">
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-p="all" onclick="fp('all')">All phases</div>
+    <div class="tab" data-p="1" onclick="fp('1')">P1 — MVP</div>
+    <div class="tab" data-p="2" onclick="fp('2')">P2 — iterate</div>
+    <div class="tab" data-p="3" onclick="fp('3')">P3 — community</div>
+    <div class="tab" data-p="4" onclick="fp('4')">P4 — scale</div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#1D9E75"></div>P1 MVP</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7F77DD"></div>P2 iterate</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D85A30"></div>P3 community</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#BA7517"></div>P4 scale</div>
+  </div>
+  <div class="tree" id="tree"></div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<script>
+const FI='<svg viewBox="0 0 16 16" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.2"><path d="M2 3.5h4.5l1.5 1.5H14v8H2z"/></svg>';
+const FL='<svg viewBox="0 0 16 16" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.2"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>';
+const CH='<svg viewBox="0 0 10 10" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" stroke-linecap="round"><path d="M3 2l4 3-4 3"/></svg>';
+
+const D=[
+{n:"pickup/",f:1,p:1,d:"Monorepo root",ch:[
+  {n:"mobile/",f:1,p:1,d:"React Native (Expo)",sep:"FRONTEND",ch:[
+    {n:"app.json",p:1,d:"Expo config"},
+    {n:"app/",f:1,p:1,d:"Expo Router pages",ch:[
+      {n:"_layout.tsx",p:1,d:"Root layout + nav"},
+      {n:"(auth)/",f:1,p:1,ch:[
+        {n:"login.tsx",p:1,d:"Phone OTP screen"},
+        {n:"verify.tsx",p:1,d:"OTP verification"}
+      ]},
+      {n:"(tabs)/",f:1,p:1,d:"Bottom tab navigator",ch:[
+        {n:"_layout.tsx",p:1,d:"Tab bar config"},
+        {n:"explore.tsx",p:1,d:"Court map + search"},
+        {n:"games.tsx",p:1,d:"My games list"},
+        {n:"profile.tsx",p:1,d:"User profile"}
+      ]},
+      {n:"court/[id].tsx",p:1,d:"Court detail + slots"},
+      {n:"game/",f:1,p:1,ch:[
+        {n:"create.tsx",p:1,d:"Create pickup game"},
+        {n:"[id].tsx",p:1,d:"Game detail + join"},
+        {n:"[id]/payments.tsx",p:2,d:"Payment tracking"},
+        {n:"[id]/rate.tsx",p:3,d:"Post-game rating"},
+        {n:"[id]/recap.tsx",p:3,d:"Game recap + photos"}
+      ]},
+      {n:"notifications.tsx",p:2,d:"Notification center"},
+      {n:"player/",f:1,p:3,ch:[
+        {n:"[id].tsx",p:3,d:"Public player profile"},
+        {n:"history.tsx",p:3,d:"Game history + stats"}
+      ]},
+      {n:"social/",f:1,p:3,ch:[
+        {n:"friends.tsx",p:3,d:"Friend list"},
+        {n:"find-players.tsx",p:3,d:"Nearby players"}
+      ]}
+    ]},
+    {n:"src/",f:1,p:1,ch:[
+      {n:"api/",f:1,p:1,d:"API client layer",ch:[
+        {n:"client.ts",p:1,d:"Axios/fetch wrapper + auth"},
+        {n:"courts.ts",p:1,d:"Court endpoints"},
+        {n:"games.ts",p:1,d:"Game endpoints"},
+        {n:"payments.ts",p:1,d:"Payment endpoints"},
+        {n:"auth.ts",p:1,d:"Login/verify/refresh"},
+        {n:"notifications.ts",p:2,d:"Push registration"},
+        {n:"social.ts",p:3,d:"Friends + ratings"}
+      ]},
+      {n:"components/",f:1,p:1,ch:[
+        {n:"CourtCard.tsx",p:1,d:"Court preview card"},
+        {n:"GameCard.tsx",p:1,d:"Game preview card"},
+        {n:"SlotPicker.tsx",p:1,d:"Time slot selector"},
+        {n:"SplitSummary.tsx",p:1,d:"Bill split overview"},
+        {n:"PlayerAvatar.tsx",p:1,d:"User avatar"},
+        {n:"RatingStars.tsx",p:3,d:"Star rating input"},
+        {n:"GameRecap.tsx",p:3,d:"Recap card"}
+      ]},
+      {n:"hooks/",f:1,p:1,ch:[
+        {n:"useAuth.ts",p:1,d:"Auth context + token"},
+        {n:"useCourts.ts",p:1,d:"Court query hook"},
+        {n:"useGame.ts",p:1,d:"Game state + WS"},
+        {n:"useLocation.ts",p:1,d:"GPS + permissions"}
+      ]},
+      {n:"stores/",f:1,p:1,d:"Zustand stores",ch:[
+        {n:"auth.ts",p:1,d:"Auth state"},
+        {n:"game.ts",p:1,d:"Active game state"}
+      ]},
+      {n:"types/",f:1,p:1,d:"Shared TS types",ch:[
+        {n:"court.ts",p:1,d:"Court, CourtSlot"},
+        {n:"game.ts",p:1,d:"Game, GamePlayer"},
+        {n:"payment.ts",p:1,d:"Payment, SplitBill"},
+        {n:"user.ts",p:1,d:"User profile"},
+        {n:"api.ts",p:1,d:"API response wrappers"}
+      ]},
+      {n:"utils/",f:1,p:1,ch:[
+        {n:"bill-split.ts",p:1,d:"Client-side split calc"},
+        {n:"format.ts",p:1,d:"Date, currency, distance"}
+      ]}
+    ]},
+    {n:"assets/",f:1,p:1,d:"Images, fonts"},
+    {n:"package.json",p:1},
+    {n:"tsconfig.json",p:1}
+  ]},
+  {n:"web-owner/",f:1,p:2,d:"Court owner portal (Vite)",sep:"FRONTEND — COURT OWNER",ch:[
+    {n:"src/",f:1,p:2,ch:[
+      {n:"pages/",f:1,p:2,ch:[
+        {n:"dashboard.tsx",p:2,d:"Booking overview"},
+        {n:"schedule.tsx",p:2,d:"Manage time slots"},
+        {n:"bookings.tsx",p:2,d:"Booking history"}
+      ]},
+      {n:"components/",f:1,p:2,ch:[
+        {n:"CalendarGrid.tsx",p:2,d:"Weekly slot editor"},
+        {n:"BookingTable.tsx",p:2,d:"Booking list table"}
+      ]},
+      {n:"main.tsx",p:2,d:"App entry"}
+    ]},
+    {n:"vite.config.ts",p:2},
+    {n:"package.json",p:2}
+  ]},
+  {n:"server/",f:1,p:1,d:"Rust backend (Axum)",sep:"BACKEND — RUST",ch:[
+    {n:"Cargo.toml",p:1,d:"Workspace + deps"},
+    {n:"src/",f:1,p:1,ch:[
+      {n:"main.rs",p:1,d:"Server entry, router setup"},
+      {n:"config.rs",p:1,d:"Env vars, settings"},
+      {n:"error.rs",p:1,d:"AppError + Into<Response>"},
+      {n:"state.rs",p:1,d:"AppState: pool, config"},
+      {n:"extractors/",f:1,p:1,d:"Axum extractors",ch:[
+        {n:"auth.rs",p:1,d:"JWT claims extractor"},
+        {n:"json.rs",p:1,d:"Validated JSON body"}
+      ]},
+      {n:"middleware/",f:1,p:1,ch:[
+        {n:"auth.rs",p:1,d:"JWT verify layer"},
+        {n:"cors.rs",p:1,d:"CORS config"},
+        {n:"rate_limit.rs",p:4,d:"Token bucket limiter"},
+        {n:"cache.rs",p:4,d:"Redis cache layer"}
+      ]},
+      {n:"routes/",f:1,p:1,d:"Route handlers",ch:[
+        {n:"mod.rs",p:1,d:"Router composition"},
+        {n:"auth.rs",p:1,d:"POST /auth/otp, /auth/verify"},
+        {n:"courts.rs",p:1,d:"GET/POST /courts"},
+        {n:"games.rs",p:1,d:"CRUD /games, join/leave"},
+        {n:"payments.rs",p:1,d:"POST /payments/split"},
+        {n:"webhooks.rs",p:1,d:"Momo/ZaloPay callbacks"},
+        {n:"owner.rs",p:2,d:"Owner portal endpoints"},
+        {n:"notifications.rs",p:2,d:"Push token CRUD"},
+        {n:"social.rs",p:3,d:"Friends, ratings"},
+        {n:"search.rs",p:4,d:"Full-text search"}
+      ]},
+      {n:"services/",f:1,p:1,d:"Business logic",ch:[
+        {n:"mod.rs",p:1},
+        {n:"court_service.rs",p:1,d:"Availability + booking"},
+        {n:"game_service.rs",p:1,d:"Create/join + matching"},
+        {n:"payment_service.rs",p:1,d:"Split calc + verify"},
+        {n:"auth_service.rs",p:1,d:"OTP send + JWT issue"},
+        {n:"notification_service.rs",p:2,d:"Expo push client"},
+        {n:"social_service.rs",p:3,d:"Ratings + friends"},
+        {n:"search_service.rs",p:4,d:"pg_trgm + tsvector"}
+      ]},
+      {n:"models/",f:1,p:1,d:"SQLx row types + domain",ch:[
+        {n:"mod.rs",p:1},
+        {n:"user.rs",p:1,d:"User, UserProfile"},
+        {n:"court.rs",p:1,d:"Court, CourtSlot"},
+        {n:"game.rs",p:1,d:"Game, GamePlayer"},
+        {n:"payment.rs",p:1,d:"Payment, SplitRecord"},
+        {n:"notification.rs",p:2,d:"PushToken, Notif"},
+        {n:"rating.rs",p:3,d:"Rating, PlayerStats"},
+        {n:"friendship.rs",p:3,d:"FriendRequest"}
+      ]},
+      {n:"db/",f:1,p:1,d:"Database queries (SQLx)",ch:[
+        {n:"mod.rs",p:1},
+        {n:"courts.rs",p:1,d:"Court queries"},
+        {n:"games.rs",p:1,d:"Game queries"},
+        {n:"payments.rs",p:1,d:"Payment queries"},
+        {n:"users.rs",p:1,d:"User CRUD"},
+        {n:"owner.rs",p:2,d:"Owner queries"},
+        {n:"notifications.rs",p:2,d:"Push token queries"},
+        {n:"social.rs",p:3,d:"Rating + friend queries"}
+      ]},
+      {n:"ws/",f:1,p:1,d:"WebSocket handlers",ch:[
+        {n:"mod.rs",p:1,d:"WS upgrade handler"},
+        {n:"game_lobby.rs",p:1,d:"Live game slot updates"}
+      ]},
+      {n:"jobs/",f:1,p:2,d:"Background tasks (tokio)",ch:[
+        {n:"mod.rs",p:2},
+        {n:"game_reminder.rs",p:2,d:"2hr before push"},
+        {n:"payment_nudge.rs",p:2,d:"Unpaid reminders"},
+        {n:"stats_aggregate.rs",p:3,d:"Player stats refresh"}
+      ]}
+    ]},
+    {n:".sqlx/",f:1,p:1,d:"Offline query cache",ch:[
+      {n:"query-*.json",p:1,d:"Compile-time SQL check"}
+    ]}
+  ]},
+  {n:"migrations/",f:1,p:1,d:"SQL migrations (sqlx-cli)",sep:"DATABASE",ch:[
+    {n:"001_initial.sql",p:1,d:"users, courts, slots"},
+    {n:"002_games.sql",p:1,d:"games, game_players"},
+    {n:"003_payments.sql",p:1,d:"payments, split_records"},
+    {n:"004_owner_profiles.sql",p:2,d:"Owner portal tables"},
+    {n:"005_push_tokens.sql",p:2,d:"Notification tokens"},
+    {n:"006_ratings.sql",p:3,d:"ratings + avg triggers"},
+    {n:"007_friendships.sql",p:3,d:"friend_requests table"},
+    {n:"008_player_stats.sql",p:3,d:"Materialized view"},
+    {n:"009_search_indexes.sql",p:4,d:"GIN + pg_trgm indexes"}
+  ]},
+  {n:"seed.sql",p:1,d:"Dev data: courts, users"},
+  {n:"docker/",f:1,p:1,d:"Docker configs",sep:"INFRA",ch:[
+    {n:"docker-compose.yml",p:1,d:"Postgres + server"},
+    {n:"docker-compose.prod.yml",p:4,d:"+ Redis + monitoring"},
+    {n:"Dockerfile",p:1,d:"Multi-stage Rust build"},
+    {n:"Dockerfile.web",p:2,d:"Nginx + owner portal"}
+  ]},
+  {n:".github/",f:1,p:1,d:"CI/CD",ch:[
+    {n:"workflows/",f:1,p:1,ch:[
+      {n:"ci.yml",p:1,d:"Cargo test + clippy"},
+      {n:"deploy.yml",p:2,d:"Fly.io auto-deploy"}
+    ]}
+  ]},
+  {n:"Cargo.toml",p:1,d:"Workspace root"},
+  {n:"fly.toml",p:2,d:"Fly.io deployment"},
+  {n:".env.example",p:1,d:"Environment template"},
+  {n:"README.md",p:1,d:"Setup + architecture"}
+]}
+];
+
+let cp='all';
+let col=new Set();
+
+function flat(nodes,depth,pp){
+  let r=[];
+  for(const n of nodes){
+    const path=pp+'/'+n.n;
+    const isF=!!n.f;
+    const isC=col.has(path);
+    r.push({...n,depth,path,isF,isC});
+    if(isF&&n.ch&&!isC) r=r.concat(flat(n.ch,depth+1,path));
+  }
+  return r;
+}
+
+function vis(phase,row){
+  if(phase==='all')return true;
+  const p=parseInt(phase);
+  return row.isF?hasChild(row,p):row.p<=p;
+}
+
+function hasChild(n,p){
+  if(!n.f)return n.p<=p;
+  if(n.p<=p)return true;
+  if(!n.ch)return false;
+  return n.ch.some(c=>hasChild(c,p));
+}
+
+function cnt(nodes){
+  let c={1:0,2:0,3:0,4:0,fo:0,fi:0};
+  (function w(l){for(const n of l){if(n.f){c.fo++;if(n.ch)w(n.ch)}else{c.fi++;c[n.p]=(c[n.p]||0)+1}}})(nodes);
+  return c;
+}
+
+function render(){
+  const rows=flat(D[0].ch,0,'');
+  const el=document.getElementById('tree');
+  let h='';
+
+  const rootC=col.has('/pickup/');
+  h+=`<div class="row" style="background:var(--color-background-secondary)">
+    <span class="toggle ${rootC?'collapsed':''}" onclick="tf('/pickup/')">${CH}</span>
+    <span class="icon">${FI}</span>
+    <span class="fname" style="font-weight:500;font-family:var(--font-sans)">pickup/</span>
+    <span class="badge b1">P1</span>
+    <span class="desc">Monorepo root</span>
+  </div>`;
+
+  let lastSep='';
+  for(const row of rows){
+    const v=vis(cp,row);
+    const ind=row.depth*18;
+    const badge=row.p?`<span class="badge b${row.p}">P${row.p}</span>`:'';
+    const desc=row.d?`<span class="desc">${row.d}</span>`:'';
+    const icon=row.isF?FI:FL;
+    const tog=row.isF&&row.ch&&row.ch.length?`<span class="toggle ${row.isC?'collapsed':''}" onclick="tf('${row.path}')">${CH}</span>`:'<span style="width:16px;flex-shrink:0"></span>';
+
+    let sep='';
+    if(row.sep&&row.sep!==lastSep&&v){
+      sep=`<div class="row sep ${v?'':'hidden'}"><span class="section-label">${row.sep}</span></div>`;
+      lastSep=row.sep;
+    }
+
+    h+=sep+`<div class="row ${row.isF?'folder-row':''} ${v?'':'hidden'}">
+      <span class="indent" style="width:${ind}px"></span>
+      ${tog}
+      <span class="icon">${icon}</span>
+      <span class="fname">${row.n}</span>
+      ${badge}${desc}
+    </div>`;
+  }
+  el.innerHTML=h;
+
+  const c=cnt(D[0].ch);
+  document.getElementById('stats').innerHTML=`
+    <span><span class="stat-val">${c.fo}</span> folders</span>
+    <span><span class="stat-val">${c.fi}</span> files</span>
+    <span><span class="stat-val">${c[1]}</span> P1</span>
+    <span><span class="stat-val">${c[2]}</span> P2</span>
+    <span><span class="stat-val">${c[3]}</span> P3</span>
+    <span><span class="stat-val">${c[4]}</span> P4</span>`;
+}
+
+function fp(p){
+  cp=p;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.p===p));
+  render();
+}
+function tf(path){
+  col.has(path)?col.delete(path):col.add(path);
+  render();
+}
+render();
+</script>
