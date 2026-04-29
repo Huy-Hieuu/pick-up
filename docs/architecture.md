@@ -8,45 +8,45 @@ PickUp is a mobile-first platform that unifies sports court booking, pickup game
 ┌─────────────────────────────────────────────────────┐
 │                     Clients                         │
 │  ┌──────────────────┐    ┌───────────────────────┐  │
-│  │  Mobile App       │    │  Court Owner Portal   │  │
-│  │  Expo + React     │    │  Vite + React SPA     │  │
-│  │  Native           │    │  (Phase 2)            │  │
-│  └────────┬─────────┘    └──────────┬────────────┘  │
+│  │  Mobile App      │    │  Court Owner Portal   │  │
+│  │  Expo + React    │    │  Vite + React SPA     │  │
+│  │  Native          │    │  (Phase 2)            │  │
+│  └────────┬─────────┘    └───────────┬───────────┘  │
 └───────────┼──────────────────────────┼──────────────┘
             │  REST + WebSocket        │  REST
             ▼                          ▼
 ┌─────────────────────────────────────────────────────┐
-│              Rust Backend (Axum)                     │
+│              Rust Backend (Axum)                    │
 │  ┌─────────────────────────────────────────────┐    │
-│  │  Router + Middleware                         │    │
-│  │  CORS · JWT verify · Request logging         │    │
+│  │  Router + Middleware                        │    │
+│  │  CORS · JWT verify · Request logging        │    │
 │  └─────────────────────────────────────────────┘    │
-│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │
-│  │  Court   │ │  Game    │ │  Payment           │  │
-│  │  Service │ │  Service │ │  Service            │  │
-│  └──────────┘ └──────────┘ └────────────────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │
-│  │  Auth    │ │  Notif   │ │  Social            │  │
-│  │  Service │ │  Service │ │  Service            │  │
-│  │          │ │  (P2)    │ │  (P3)              │  │
-│  └──────────┘ └──────────┘ └────────────────────┘  │
+│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐   │
+│  │  Court   │ │  Game    │ │  Payment           │   │
+│  │  Service │ │  Service │ │  Service           │   │
+│  └──────────┘ └──────────┘ └────────────────────┘   │
+│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐   │
+│  │  Auth    │ │  Notif   │ │  Social            │   │
+│  │  Service │ │  Service │ │  Service           │   │
+│  │          │ │  (P2)    │ │  (P3)              │   │
+│  └──────────┘ └──────────┘ └────────────────────┘   │
 │  ┌─────────────────────────────────────────────┐    │
-│  │  Shared: AppState · Errors · Extractors      │    │
+│  │  Shared: AppState · Errors · Extractors     │    │
 │  └─────────────────────────────────────────────┘    │
 └──────────────┬──────────────────────────────────────┘
                │  SQLx (compile-time checked)
                ▼
 ┌─────────────────────────────────────────────────────┐
-│                   Data Layer                         │
-│  ┌────────────┐  ┌────────────┐  ┌──────────────┐  │
-│  │ PostgreSQL │  │ S3 / MinIO │  │ Redis (P4)   │  │
-│  │ Core DB    │  │ Media      │  │ Cache        │  │
-│  └────────────┘  └────────────┘  └──────────────┘  │
+│                   Data Layer                        │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────┐   │
+│  │ PostgreSQL │  │ S3 / MinIO │  │ Redis (P4)   │   │
+│  │ Core DB    │  │ Media      │  │ Cache        │   │
+│  └────────────┘  └────────────┘  └──────────────┘   │
 └──────────────┬──────────────────────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────────────────────┐
-│              External Integrations                   │
+│              External Integrations                  │
 │  Momo/ZaloPay · SMS Provider · Google Maps          │
 │  Expo Push · Zalo Deeplink                          │
 └─────────────────────────────────────────────────────┘
@@ -93,6 +93,7 @@ HTTP Request
 ```
 
 **Rules:**
+
 - Route handlers must be thin — no business logic, only request parsing and response formatting
 - Services never touch HTTP types (no `axum::Json`, no status codes)
 - DB functions are pure queries — no business decisions
@@ -100,16 +101,16 @@ HTTP Request
 
 ### 3.2 Key Modules
 
-| Module | Responsibility | Key Patterns |
-|--------|---------------|--------------|
-| `routes/` | HTTP handlers, request/response types | `axum::extract`, JSON responses |
-| `services/` | Business rules, orchestration | Takes `&PgPool`, returns `Result<T, AppError>` |
-| `db/` | SQL queries via SQLx | `sqlx::query_as!`, compile-time checked |
-| `models/` | Data structs | `#[derive(sqlx::FromRow, Serialize)]` |
-| `extractors/` | Custom Axum extractors | JWT `Claims`, validated `JsonBody<T>` |
-| `middleware/` | Request pipeline layers | Auth verification, CORS |
-| `ws/` | WebSocket handlers | Game lobby real-time updates |
-| `jobs/` | Background tasks (Phase 2+) | Tokio-spawned, cron-like scheduling |
+| Module          | Responsibility                        | Key Patterns                                       |
+| --------------- | ------------------------------------- | -------------------------------------------------- |
+| `routes/`     | HTTP handlers, request/response types | `axum::extract`, JSON responses                  |
+| `services/`   | Business rules, orchestration         | Takes `&PgPool`, returns `Result<T, AppError>` |
+| `db/`         | SQL queries via SQLx                  | `sqlx::query_as!`, compile-time checked          |
+| `models/`     | Data structs                          | `#[derive(sqlx::FromRow, Serialize)]`            |
+| `extractors/` | Custom Axum extractors                | JWT `Claims`, validated `JsonBody<T>`          |
+| `middleware/` | Request pipeline layers               | Auth verification, CORS                            |
+| `ws/`         | WebSocket handlers                    | Game lobby real-time updates                       |
+| `jobs/`       | Background tasks (Phase 2+)           | Tokio-spawned, cron-like scheduling                |
 
 ### 3.3 Authentication Flow
 
@@ -128,7 +129,7 @@ HTTP Request
      │  POST /auth/verify                 │
      │  {phone, otp}    │                 │
      │─────────────────►│  Verify OTP     │
-     │                  │  Issue JWT pair  │
+     │                  │  Issue JWT pair │
      │  {access, refresh}                 │
      │◄─────────────────│                 │
      │                  │                 │
@@ -186,6 +187,7 @@ Payment nudge reminders for unpaid players (Phase 2)
 ```
 
 **Design decisions:**
+
 - Split is recalculated whenever players join/leave (before game starts)
 - Game creator can optionally pay a different share
 - Payment status is tracked per-player with states: `pending → paid → refunded`
@@ -214,11 +216,13 @@ app/
 ```
 
 **State management:**
+
 - **Zustand stores** for global state (auth tokens, active game)
 - **React hooks** for server state (useCourts, useGame wrapping API calls)
 - **WebSocket** in useGame hook for live game lobby updates
 
 **API client pattern:**
+
 ```
 src/api/client.ts    →  Base fetch/axios wrapper with JWT injection
 src/api/courts.ts    →  getCourts(), getCourtById(), bookSlot()
@@ -229,6 +233,7 @@ src/api/payments.ts  →  getSplit(), initiatePayment()
 ### 4.2 Court Owner Portal (Phase 2)
 
 Vite + React SPA with three main views:
+
 - **Dashboard** — booking overview and revenue stats
 - **Schedule** — weekly calendar grid to manage available time slots
 - **Bookings** — history table with filtering
@@ -293,31 +298,32 @@ payments
 
 Sequential numbered SQL files managed by `sqlx-cli`:
 
-| Migration | Phase | Tables |
-|-----------|-------|--------|
-| 001_initial | P1 | users, courts, court_slots |
-| 002_games | P1 | games, game_players |
-| 003_payments | P1 | payments, split_records |
-| 004_owner_profiles | P2 | owner portal tables |
-| 005_push_tokens | P2 | notification tokens |
-| 006_ratings | P3 | ratings + avg triggers |
-| 007_friendships | P3 | friend_requests |
-| 008_player_stats | P3 | materialized view |
-| 009_search_indexes | P4 | GIN + pg_trgm indexes |
+| Migration          | Phase | Tables                     |
+| ------------------ | ----- | -------------------------- |
+| 001_initial        | P1    | users, courts, court_slots |
+| 002_games          | P1    | games, game_players        |
+| 003_payments       | P1    | payments, split_records    |
+| 004_owner_profiles | P2    | owner portal tables        |
+| 005_push_tokens    | P2    | notification tokens        |
+| 006_ratings        | P3    | ratings + avg triggers     |
+| 007_friendships    | P3    | friend_requests            |
+| 008_player_stats   | P3    | materialized view          |
+| 009_search_indexes | P4    | GIN + pg_trgm indexes      |
 
 ## 6. External Integrations
 
-| Service | Purpose | Phase | Integration Pattern |
-|---------|---------|-------|-------------------|
-| Momo / ZaloPay | Payment processing | P1 | REST API + webhook callbacks |
-| SMS Provider | OTP delivery | P1 | REST API (fire-and-forget) |
-| Google Maps | Court locations, distance | P1 | Client-side SDK + geocoding |
-| Expo Push | Push notifications | P2 | Server-side REST to Expo API |
-| Zalo Deeplink | Share game invites | P1 | URL scheme generation |
+| Service        | Purpose                   | Phase | Integration Pattern          |
+| -------------- | ------------------------- | ----- | ---------------------------- |
+| Momo / ZaloPay | Payment processing        | P1    | REST API + webhook callbacks |
+| SMS Provider   | OTP delivery              | P1    | REST API (fire-and-forget)   |
+| Google Maps    | Court locations, distance | P1    | Client-side SDK + geocoding  |
+| Expo Push      | Push notifications        | P2    | Server-side REST to Expo API |
+| Zalo Deeplink  | Share game invites        | P1    | URL scheme generation        |
 
 ### Payment Webhook Security
 
 All payment webhooks (`routes/webhooks.rs`) must:
+
 1. Verify the request signature using the provider's secret key
 2. Check idempotency (ignore duplicate webhook deliveries)
 3. Validate the payment amount matches the expected split amount
@@ -357,21 +363,21 @@ services:
 
 ## 8. Phased Delivery
 
-| Phase | Weeks | Scope |
-|-------|-------|-------|
-| **P1 — MVP** | 5–12 | Auth (OTP+JWT), court browsing/booking, game create/join with WebSocket lobby, bill splitting with Momo/ZaloPay |
-| **P2 — Iterate** | 13–18 | Court owner portal, push notifications, payment tracking UI, Fly.io deployment |
-| **P3 — Community** | 19–24 | Player profiles + ratings, friend system, game history/recaps |
-| **P4 — Scale** | TBD | Redis caching, full-text search (pg_trgm + tsvector), rate limiting, monitoring |
+| Phase                     | Weeks  | Scope                                                                                                           |
+| ------------------------- | ------ | --------------------------------------------------------------------------------------------------------------- |
+| **P1 — MVP**       | 5–12  | Auth (OTP+JWT), court browsing/booking, game create/join with WebSocket lobby, bill splitting with Momo/ZaloPay |
+| **P2 — Iterate**   | 13–18 | Court owner portal, push notifications, payment tracking UI, Fly.io deployment                                  |
+| **P3 — Community** | 19–24 | Player profiles + ratings, friend system, game history/recaps                                                   |
+| **P4 — Scale**     | TBD    | Redis caching, full-text search (pg_trgm + tsvector), rate limiting, monitoring                                 |
 
 ## 9. Key Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| Rust + Axum over Node.js | Type safety, performance for WebSocket + concurrent booking, single binary deployment |
-| SQLx over ORM (Diesel/SeaORM) | Compile-time checked SQL, full control over queries, simpler mental model |
-| Expo Router over React Navigation | File-based routing, better DX, built-in deep linking support |
-| Zustand over Redux | Minimal boilerplate, works well with hooks pattern, sufficient for app complexity |
-| Phone OTP over email/social login | Matches Vietnamese user behavior (phone-first), simpler flow |
-| Monorepo over multi-repo | Shared types possible, single CI pipeline, easier for 3-person team |
-| PostgreSQL over Supabase backend | Full control, compile-time SQL checks with SQLx, custom WebSocket logic |
+| Decision                          | Rationale                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------- |
+| Rust + Axum over Node.js          | Type safety, performance for WebSocket + concurrent booking, single binary deployment |
+| SQLx over ORM (Diesel/SeaORM)     | Compile-time checked SQL, full control over queries, simpler mental model             |
+| Expo Router over React Navigation | File-based routing, better DX, built-in deep linking support                          |
+| Zustand over Redux                | Minimal boilerplate, works well with hooks pattern, sufficient for app complexity     |
+| Phone OTP over email/social login | Matches Vietnamese user behavior (phone-first), simpler flow                          |
+| Monorepo over multi-repo          | Shared types possible, single CI pipeline, easier for 3-person team                   |
+| PostgreSQL over Supabase backend  | Full control, compile-time SQL checks with SQLx, custom WebSocket logic               |
