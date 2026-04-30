@@ -1,0 +1,352 @@
+{
+  "info": {
+    "name": "PickUpCollection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "PickUp API Collection for testing"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/health",
+            "description": "Health check"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST /auth/register",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"0909123123\",\n  \"email\": \"test@example.com\",\n  \"display_name\": \"John Doe\",\n  \"avatar_url\": \"https://example.com/avatar.jpg\",\n  \"password\": \"password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/login",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/verify",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"phone\": \"0909123123\",\n  \"code\": \"123456\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/forgot-password",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/forgot-password",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/verify-reset-otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify-reset-otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/set-new-password",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/set-new-password",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset_token\": \"REPLACE_WITH_RESET_TOKEN_FROM_STEP_2\",\n  \"new_password\": \"newpassword123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/refresh",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"REPLACE_WITH_REFRESH_TOKEN\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /auth/me",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/auth/me",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "PATCH /auth/me",
+          "request": {
+            "method": "PATCH",
+            "url": "http://localhost:8080/auth/me",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"John Updated\",\n  \"avatar_url\": \"https://example.com/new-avatar.jpg\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Courts",
+      "item": [
+        {
+          "name": "GET /courts",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/courts?page=1&limit=20"
+          }
+        },
+        {
+          "name": "GET /courts/:id",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000"
+          }
+        },
+        {
+          "name": "GET /courts/:id/slots",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000/slots"
+          }
+        },
+        {
+          "name": "POST /courts/:id/slots/:slot_id/book",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000/slots/660e8400-e29b-41d4-a716-446655440000/book",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Games",
+      "item": [
+        {
+          "name": "GET /games",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games?page=1&limit=20",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "POST /games",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"court_slot_id\": \"660e8400-e29b-41d4-a716-446655440000\",\n  \"sport_type\": \"pickleball\",\n  \"max_players\": 10,\n  \"description\": \"Cuộc chơi vui vẻ\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /games/:id",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "POST /games/:id/join",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/join",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "POST /games/:id/leave",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/leave",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "POST /games/:id/cancel",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/cancel",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "PATCH /games/:id/status",
+          "request": {
+            "method": "PATCH",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"in_progress\"\n}" }
+          }
+        },
+        {
+          "name": "GET /games/:id/split",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/split",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "GET /games/:id/share",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/share",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "GET /games/:id/payments",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }]
+          }
+        },
+        {
+          "name": "POST /games/:id/payments/initiate (Momo)",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments/initiate",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"provider\": \"momo\"\n}" }
+          }
+        },
+        {
+          "name": "POST /games/:id/payments/initiate (ZaloPay)",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments/initiate",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"provider\": \"zalopay\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "POST /upload/avatar",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/upload/avatar",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content_type\": \"image/jpeg\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (No Auth)",
+      "item": [
+        {
+          "name": "POST /webhooks/momo",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/webhooks/momo",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        },
+        {
+          "name": "POST /webhooks/zalopay",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/webhooks/zalopay",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        }
+      ]
+    }
+  ]
+}
