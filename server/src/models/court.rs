@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-// use validator::Validate;
+use validator::Validate;
 
 // ── Enums ──────────────────────────────────────────────────────
 
@@ -73,11 +73,12 @@ impl Pagination {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct ListCourtsQuery {
     pub sport_type: Option<SportType>,
     pub lat: Option<f64>,
     pub lng: Option<f64>,
+    #[validate(range(min = 0.1, max = 100.0, message = "radius_km must be between 0.1 and 100"))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]
     pub pagination: Pagination,
@@ -103,4 +104,83 @@ pub struct Paginated<T> {
     pub total: i64,
     pub page: i64,
     pub limit: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Pagination ─────────────────────────────────────────────────
+
+    #[test]
+    fn default_page_is_1() {
+        let p = Pagination { page: None, limit: None };
+        assert_eq!(p.page(), 1);
+    }
+
+    #[test]
+    fn default_limit_is_20() {
+        let p = Pagination { page: None, limit: None };
+        assert_eq!(p.effective_limit(), 20);
+    }
+
+    #[test]
+    fn negative_page_clamps_to_1() {
+        let p = Pagination { page: Some(-5), limit: None };
+        assert_eq!(p.page(), 1);
+    }
+
+    #[test]
+    fn zero_page_clamps_to_1() {
+        let p = Pagination { page: Some(0), limit: None };
+        assert_eq!(p.page(), 1);
+    }
+
+    #[test]
+    fn large_page_is_accepted() {
+        let p = Pagination { page: Some(999), limit: None };
+        assert_eq!(p.page(), 999);
+    }
+
+    #[test]
+    fn limit_clamps_to_1_minimum() {
+        let p = Pagination { page: None, limit: Some(0) };
+        assert_eq!(p.effective_limit(), 1);
+    }
+
+    #[test]
+    fn negative_limit_clamps_to_1() {
+        let p = Pagination { page: None, limit: Some(-10) };
+        assert_eq!(p.effective_limit(), 1);
+    }
+
+    #[test]
+    fn limit_clamps_to_100_maximum() {
+        let p = Pagination { page: None, limit: Some(999) };
+        assert_eq!(p.effective_limit(), 100);
+    }
+
+    #[test]
+    fn limit_50_is_accepted() {
+        let p = Pagination { page: None, limit: Some(50) };
+        assert_eq!(p.effective_limit(), 50);
+    }
+
+    #[test]
+    fn offset_calculation_page_1() {
+        let p = Pagination { page: Some(1), limit: Some(20) };
+        assert_eq!(p.offset(), 0);
+    }
+
+    #[test]
+    fn offset_calculation_page_3() {
+        let p = Pagination { page: Some(3), limit: Some(20) };
+        assert_eq!(p.offset(), 40);
+    }
+
+    #[test]
+    fn offset_with_custom_limit() {
+        let p = Pagination { page: Some(2), limit: Some(50) };
+        assert_eq!(p.offset(), 50);
+    }
 }

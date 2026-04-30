@@ -36,7 +36,6 @@ impl PaymentService {
     /// Process Momo webhook callback.
     ///
     /// **MUST** verify the signature before processing.
-    #[allow(dead_code)]
     pub async fn handle_momo_webhook(_pool: &PgPool, _body: &str) -> AppResult<()> {
         // TODO:
         // 1. Verify signature using MOMO_SECRET_KEY
@@ -44,13 +43,14 @@ impl PaymentService {
         // 3. Update payment status
         // 4. Broadcast payment_updated via WebSocket
         tracing::info!("Momo webhook received (stub)");
-        Ok(())
+        Err(crate::error::AppError::Unprocessable(
+            "Momo webhook handler not implemented".into(),
+        ))
     }
 
     /// Process ZaloPay webhook callback.
     ///
     /// **MUST** verify the MAC using ZALOPAY_KEY2.
-    #[allow(dead_code)]
     pub async fn handle_zalopay_webhook(_pool: &PgPool, _body: &str) -> AppResult<()> {
         // TODO:
         // 1. Verify MAC using key2
@@ -58,6 +58,8 @@ impl PaymentService {
         // 3. Update payment status
         // 4. Broadcast payment_updated via WebSocket
         tracing::info!("ZaloPay webhook received (stub)");
-        Ok(())
+        Err(crate::error::AppError::Unprocessable(
+            "ZaloPay webhook handler not implemented".into(),
+        ))
     }
 }

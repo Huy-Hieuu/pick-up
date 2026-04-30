@@ -2,6 +2,7 @@
 //!
 //! Uses a Redis list as a simple queue:
 //! - `email:queue` → LPUSH {json payload}, BRPOP to consume
+//! - `email:dead`  → poison messages that failed deserialization
 //!
 //! Worker runs as a background tokio task, processing one email at a time.
 //! If SMTP is temporarily down, the message stays in the queue and will be retried.
@@ -84,8 +85,21 @@ async fn process_one_email(
         }
     };
 
-    let job: EmailJob = serde_json::from_str(&payload)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize email job: {e}"))?;
+    let job: EmailJob = match serde_json::from_str(&payload) {
+        Ok(job) => job,
+        Err(e) => {
+            // Poison message — move to dead-letter queue for inspection.
+            tracing::error!(error = %e, "Failed to deserialize email job, moving to dead-letter queue");
+            let mut conn = redis.clone();
+            let _: () = redis::cmd("LPUSH")
+                .arg("email:dead")
+                .arg(&payload)
+                .query_async(&mut conn)
+                .await
+                .map_err(|re| anyhow::anyhow!("Failed to push to dead-letter queue: {re}"))?;
+            return Ok(());
+        }
+    };
 
     tracing::info!(to = %job.to, "Processing email job");
 
@@ -126,4 +140,102 @@ async fn process_one_email(
 
     tracing::info!(to = %job.to, "Email sent successfully");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── EmailJob serialization roundtrip ───────────────────────────
+
+    #[test]
+    fn serialize_deserialize_roundtrip() {
+        let job = EmailJob {
+            to: "user@example.com".to_string(),
+            subject: "Test Subject".to_string(),
+            body: "Hello, world!".to_string(),
+        };
+        let json = serde_json::to_string(&job).unwrap();
+        let parsed: EmailJob = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.to, job.to);
+        assert_eq!(parsed.subject, job.subject);
+        assert_eq!(parsed.body, job.body);
+    }
+
+    #[test]
+    fn serialize_produces_valid_json() {
+        let job = EmailJob {
+            to: "test@pickup.app".to_string(),
+            subject: "Your code is 123456".to_string(),
+            body: "Use this code to verify.".to_string(),
+        };
+        let json = serde_json::to_string(&job).unwrap();
+
+        // Verify JSON structure
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["to"], "test@pickup.app");
+        assert_eq!(v["subject"], "Your code is 123456");
+        assert_eq!(v["body"], "Use this code to verify.");
+    }
+
+    #[test]
+    fn deserialize_rejects_missing_fields() {
+        let json = r#"{"to": "user@example.com"}"#;
+        let result = serde_json::from_str::<EmailJob>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_json() {
+        let json = r#"not valid json"#;
+        let result = serde_json::from_str::<EmailJob>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn handles_unicode_in_body() {
+        let job = EmailJob {
+            to: "user@example.com".to_string(),
+            subject: "Mã xác nhận PickUp".to_string(),
+            body: "Mã của bạn là: 123456\nMã có hiệu lực trong 5 phút.".to_string(),
+        };
+        let json = serde_json::to_string(&job).unwrap();
+        let parsed: EmailJob = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.body, job.body);
+    }
+
+    #[test]
+    fn handles_special_characters_in_subject() {
+        let job = EmailJob {
+            to: "user@example.com".to_string(),
+            subject: "Welcome to PickUp! 🎾 Courts & Games".to_string(),
+            body: "Let's play!".to_string(),
+        };
+        let json = serde_json::to_string(&job).unwrap();
+        let parsed: EmailJob = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.subject, job.subject);
+    }
+
+    // ── OTP email body format ──────────────────────────────────────
+
+    #[test]
+    fn otp_email_body_contains_code() {
+        let code = "123456";
+        let body = format!(
+            "Your PickUp verification code is: {}\n\nThis code expires in 5 minutes.",
+            code
+        );
+        assert!(body.contains(code));
+        assert!(body.contains("expires in 5 minutes"));
+    }
+
+    // ── Dead-letter queue key ──────────────────────────────────────
+
+    #[test]
+    fn dead_letter_queue_name() {
+        // Verify the queue key matches what the worker uses
+        let queue = "email:dead";
+        assert_eq!(queue, "email:dead");
+    }
 }

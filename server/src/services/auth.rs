@@ -1,3 +1,4 @@
+use constant_time_eq::constant_time_eq;
 use rand::Rng;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
@@ -52,54 +53,87 @@ impl AuthService {
         max_attempts: i16,
         jwt_secret: &str,
         access_ttl_minutes: i64,
+        refresh_ttl_days: i64,
     ) -> AppResult<AuthResponse> {
         let mut conn = redis.clone();
+        let otp_key = format!("otp:{}", req.email);
         let attempts_key = format!("otp:attempts:{}", req.email);
 
+        // Atomically fetch and delete the OTP (prevents concurrent use).
+        let stored: Option<String> = redis::cmd("GETDEL")
+            .arg(&otp_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+
+        let stored = match stored {
+            Some(code) => code,
+            None => {
+                // No OTP found — it either expired or was never issued.
+                // Still increment attempts to prevent brute-force probing.
+                let _: i32 = conn.incr(&attempts_key, 1i32)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+                return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+            }
+        };
+
+        // Check attempts AFTER confirming OTP exists.
         let new_count: i32 = conn.incr(&attempts_key, 1i32)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
         if new_count > max_attempts as i32 {
+            // Re-store the OTP so the user can retry (they haven't used it yet).
+            let _: () = conn.set_ex(&otp_key, &stored, 60)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
             return Err(AppError::BadRequest("Too many attempts".into()));
         }
 
-        let stored: Option<String> = conn.get(format!("otp:{}", req.email))
+        // Constant-time comparison to prevent timing attacks.
+        if !constant_time_eq(stored.as_bytes(), req.code.as_bytes()) {
+            // OTP was consumed via GETDEL but didn't match — restore it so the
+            // user can retry with remaining attempts.
+            let _: () = conn.set_ex(&otp_key, &stored, 60)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+            tracing::warn!(email = %req.email, attempts = %new_count, "Invalid OTP");
+            return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+        }
+
+        // OTP matched — clean up attempts key.
+        let _: () = conn.del(&attempts_key)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
-        match stored.as_deref() {
-            Some(code) if code == req.code => {
-                let email_key = format!("otp:{}", req.email);
-                let _: () = conn.del(&[email_key, attempts_key])
+        let user = match db::find_user_by_email(pool, &req.email).await.map_err(AppError::Database)? {
+            Some(u) => u,
+            None => {
+                db::create_user(pool, &req.phone, &req.email, None, None, None)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
-
-                let user = match db::find_user_by_email(pool, &req.email).await.map_err(AppError::Database)? {
-                    Some(u) => u,
-                    None => {
-                        db::create_user(pool, &req.phone, &req.email, None, None, None)
-                            .await
-                            .map_err(AppError::Database)?
-                    }
-                };
-
-                let access_token = create_access_token(user.id, jwt_secret, access_ttl_minutes)
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
-                let refresh_token = create_refresh_token(user.id, jwt_secret, access_ttl_minutes * 60)
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
-
-                Ok(AuthResponse {
-                    access_token,
-                    refresh_token,
-                    user: UserProfile::from(user),
-                })
+                    .map_err(|e: sqlx::Error| {
+                        // Handle UNIQUE constraint violation on email (concurrent registration).
+                        if let Some(db_err) = e.as_database_error() {
+                            if db_err.code().as_deref() == Some("23505") {
+                                return AppError::Conflict("Email already registered".into());
+                            }
+                        }
+                        AppError::Database(e)
+                    })?
             }
-            _ => {
-                tracing::warn!(email = %req.email, attempts = %new_count, "Invalid OTP");
-                Err(AppError::Unauthorized("Invalid or expired OTP".into()))
-            }
-        }
+        };
+
+        let access_token = create_access_token(user.id, jwt_secret, access_ttl_minutes)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
+        let refresh_token = create_refresh_token(user.id, jwt_secret, refresh_ttl_days)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: UserProfile::from(user),
+        })
     }
 
     pub async fn refresh_token(
@@ -140,7 +174,7 @@ impl AuthService {
 
         let new_access_token = create_access_token(user.id, jwt_secret, access_ttl_minutes)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
-        let new_refresh_token = create_refresh_token(user.id, jwt_secret, refresh_ttl_days * 60)
+        let new_refresh_token = create_refresh_token(user.id, jwt_secret, refresh_ttl_days)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
 
         Ok(AuthResponse {
@@ -163,7 +197,8 @@ impl AuthService {
         user_id: Uuid,
         req: UpdateProfileRequest,
     ) -> AppResult<UserProfile> {
-        let row = db::update_user_profile(pool, user_id, req.display_name.as_deref(), req.avatar_url.as_deref())
+        let display_name = req.display_name.as_deref().map(|s| s.trim());
+        let row = db::update_user_profile(pool, user_id, display_name, req.avatar_url.as_deref())
             .await
             .map_err(AppError::Database)?;
         Ok(row.into())
@@ -174,6 +209,7 @@ impl AuthService {
         req: RegisterRequest,
         jwt_secret: &str,
         access_ttl_minutes: i64,
+        refresh_ttl_days: i64,
     ) -> AppResult<AuthResponse> {
         if db::find_user_by_email(pool, &req.email).await.map_err(AppError::Database)?.is_some() {
             return Err(AppError::Conflict("Email already registered".into()));
@@ -192,11 +228,19 @@ impl AuthService {
             req.avatar_url.as_deref(),
         )
         .await
-        .map_err(AppError::Database)?;
+        .map_err(|e: sqlx::Error| {
+            // Handle UNIQUE constraint violation (concurrent registration).
+            if let Some(db_err) = e.as_database_error() {
+                if db_err.code().as_deref() == Some("23505") {
+                    return AppError::Conflict("Email already registered".into());
+                }
+            }
+            AppError::Database(e)
+        })?;
 
         let access_token = create_access_token(user.id, jwt_secret, access_ttl_minutes)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
-        let refresh_token = create_refresh_token(user.id, jwt_secret, access_ttl_minutes * 60)
+        let refresh_token = create_refresh_token(user.id, jwt_secret, refresh_ttl_days)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
 
         Ok(AuthResponse {
@@ -211,13 +255,18 @@ impl AuthService {
         req: LoginRequest,
         jwt_secret: &str,
         access_ttl_minutes: i64,
+        refresh_ttl_days: i64,
     ) -> AppResult<AuthResponse> {
         let user = db::find_user_by_email_and_password(pool, &req.email)
             .await
             .map_err(AppError::Database)?
             .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
 
-        let valid = db::verify_password(&req.password, user.password_hash.as_ref().unwrap_or(&"".to_string()))
+        // Explicitly check for missing password hash instead of falling back to empty string.
+        let hash = user.password_hash.as_ref()
+            .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
+
+        let valid = db::verify_password(&req.password, hash)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Password verify error: {e}")))?;
 
         if !valid {
@@ -226,7 +275,7 @@ impl AuthService {
 
         let access_token = create_access_token(user.id, jwt_secret, access_ttl_minutes)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
-        let refresh_token = create_refresh_token(user.id, jwt_secret, access_ttl_minutes * 60)
+        let refresh_token = create_refresh_token(user.id, jwt_secret, refresh_ttl_days)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("JWT encode error: {e}")))?;
 
         Ok(AuthResponse {
@@ -237,10 +286,23 @@ impl AuthService {
     }
 
     pub async fn forgot_password(
+        pool: &PgPool,
         redis: &ConnectionManager,
         email: &str,
         ttl_seconds: i64,
     ) -> AppResult<()> {
+        // Check if user exists before sending OTP to avoid wasting email quota.
+        let user_exists = db::find_user_by_email(pool, email)
+            .await
+            .map_err(AppError::Database)?
+            .is_some();
+
+        if !user_exists {
+            // Return the same response to avoid user enumeration.
+            tracing::warn!(email, "Forgot-password requested for unregistered email");
+            return Ok(());
+        }
+
         Self::send_otp(redis, email, ttl_seconds).await
     }
 
@@ -252,50 +314,66 @@ impl AuthService {
         reset_token_ttl_seconds: i64,
     ) -> AppResult<VerifyResetOtpResponse> {
         let mut conn = redis.clone();
+        let otp_key = format!("otp:{}", req.email);
         let attempts_key = format!("otp:attempts:{}", req.email);
+
+        // Atomically fetch and delete the OTP.
+        let stored: Option<String> = redis::cmd("GETDEL")
+            .arg(&otp_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+
+        let stored = match stored {
+            Some(code) => code,
+            None => {
+                let _: i32 = conn.incr(&attempts_key, 1i32)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+                return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+            }
+        };
 
         let new_count: i32 = conn.incr(&attempts_key, 1i32)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
         if new_count > max_attempts as i32 {
+            let _: () = conn.set_ex(&otp_key, &stored, 60)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
             return Err(AppError::BadRequest("Too many attempts".into()));
         }
 
-        let stored: Option<String> = conn.get(format!("otp:{}", req.email))
+        if !constant_time_eq(stored.as_bytes(), req.code.as_bytes()) {
+            let _: () = conn.set_ex(&otp_key, &stored, 60)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+            tracing::warn!(email = %req.email, attempts = %new_count, "Invalid OTP for password reset");
+            return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+        }
+
+        let _: () = conn.del(&attempts_key)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
-        match stored.as_deref() {
-            Some(code) if code == req.code => {
-                let email_key = format!("otp:{}", req.email);
-                let _: () = conn.del(&[email_key, attempts_key])
-                    .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+        let user = db::find_user_by_email(pool, &req.email)
+            .await
+            .map_err(AppError::Database)?
+            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
-                let user = db::find_user_by_email(pool, &req.email)
-                    .await
-                    .map_err(AppError::Database)?
-                    .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+        let reset_token: String = {
+            let mut rng = rand::thread_rng();
+            hex::encode(rng.gen::<[u8; 32]>())
+        };
 
-                let reset_token: String = {
-                    let mut rng = rand::thread_rng();
-                    hex::encode(rng.gen::<[u8; 32]>())
-                };
+        let _: () = conn.set_ex(format!("reset_token:{}", reset_token), user.id.to_string(), reset_token_ttl_seconds as u64)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
-                let _: () = conn.set_ex(format!("reset_token:{}", reset_token), user.id.to_string(), reset_token_ttl_seconds as u64)
-                    .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+        tracing::info!(email = %req.email, "Reset OTP verified, token issued");
 
-                tracing::info!(email = %req.email, "Reset OTP verified, token issued");
-
-                Ok(VerifyResetOtpResponse { reset_token })
-            }
-            _ => {
-                tracing::warn!(email = %req.email, attempts = %new_count, "Invalid OTP for password reset");
-                Err(AppError::Unauthorized("Invalid or expired OTP".into()))
-            }
-        }
+        Ok(VerifyResetOtpResponse { reset_token })
     }
 
     pub async fn set_new_password(
@@ -303,23 +381,25 @@ impl AuthService {
         redis: &ConnectionManager,
         req: SetNewPasswordRequest,
     ) -> AppResult<SetNewPasswordResponse> {
+        // Hash the password BEFORE consuming the token.
+        let password_hash = db::hash_password(&req.new_password)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Password hash error: {e}")))?;
+
         let mut conn = redis.clone();
         let token_key = format!("reset_token:{}", req.reset_token);
 
-        let user_id_str: Option<String> = conn.get(&token_key)
+        // Atomically consume the reset token with GETDEL.
+        let user_id_str: Option<String> = redis::cmd("GETDEL")
+            .arg(&token_key)
+            .query_async(&mut conn)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
-        let user_id_str = user_id_str.ok_or_else(|| AppError::Unauthorized("Invalid or expired reset token".into()))?;
 
-        let _: () = conn.del(&token_key)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+        let user_id_str = user_id_str
+            .ok_or_else(|| AppError::Unauthorized("Invalid or expired reset token".into()))?;
 
         let user_id = Uuid::parse_str(&user_id_str)
             .map_err(|_| AppError::Unauthorized("Invalid reset token".into()))?;
-
-        let password_hash = db::hash_password(&req.new_password)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Password hash error: {e}")))?;
 
         db::update_password_hash(pool, user_id, &password_hash)
             .await

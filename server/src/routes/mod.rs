@@ -13,7 +13,7 @@ use crate::state::AppState;
 /// Build the complete API router tree.
 ///
 /// Structure:
-/// ```
+/// ```text
 /// /health
 /// /auth/*         (public)
 /// /courts/*       (public GET, auth POST)
@@ -32,12 +32,18 @@ pub fn build_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         .nest("/games", games::router())
         .nest("/upload", upload::router())
-        .layer(middleware::from_fn(crate::middleware::auth::require_auth));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::require_auth,
+        ));
 
     // Payments nested under /games/{game_id}/payments
     let payment_routes = Router::new()
         .nest("/games/{game_id}/payments", payments::router())
-        .layer(middleware::from_fn(crate::middleware::auth::require_auth));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::require_auth,
+        ));
 
     Router::new()
         .merge(public_routes)

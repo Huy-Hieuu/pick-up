@@ -67,6 +67,7 @@ async fn verify_otp(
         state.settings.redis.otp_max_attempts,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
+        state.settings.jwt.refresh_ttl_days,
     )
     .await?;
     Ok(Json(resp))
@@ -98,6 +99,7 @@ async fn register(
         req,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
+        state.settings.jwt.refresh_ttl_days,
     )
     .await?;
     Ok(Json(resp))
@@ -113,6 +115,7 @@ async fn login(
         req,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
+        state.settings.jwt.refresh_ttl_days,
     )
     .await?;
     Ok(Json(resp))
@@ -124,12 +127,14 @@ async fn forgot_password(
     ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     crate::services::AuthService::forgot_password(
+        &state.pool,
         &state.redis,
         &req.email,
         state.settings.redis.otp_ttl_seconds,
     )
     .await?;
-    Ok(Json(serde_json::json!({ "message": "OTP sent for password reset" })))
+    // Always return the same response regardless of whether the email exists.
+    Ok(Json(serde_json::json!({ "message": "If the email is registered, an OTP has been sent" })))
 }
 
 /// `POST /auth/verify-reset-otp` — step 2: verify OTP, get temp reset_token.

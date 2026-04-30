@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
 /// `GET /games/:game_id/payments` — list all payments for a game.
 async fn list_payments(
     State(state): State<AppState>,
+    _auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PaymentRow>>> {
     let payments = PaymentService::list_payments(&state.pool, game_id).await?;

@@ -149,3 +149,135 @@ pub fn create_refresh_token(
     )
     .map_err(Into::into)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::decode;
+    use uuid::Uuid;
+
+    const TEST_SECRET: &str = "test-secret-key-for-testing-only";
+
+    fn decode_token(token: &str, secret: &str) -> jsonwebtoken::TokenData<Claims> {
+        let mut validation = Validation::default();
+        validation.set_issuer(&[ISSUER]);
+        decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
+            .expect("Token should decode successfully")
+    }
+
+    // ── Access token ──────────────────────────────────────────────
+
+    #[test]
+    fn access_token_contains_correct_claims() {
+        let user_id = Uuid::new_v4();
+        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let data = decode_token(&token, TEST_SECRET);
+
+        assert_eq!(data.claims.sub, user_id.to_string());
+        assert_eq!(data.claims.typ, "access");
+        assert_eq!(data.claims.iss, ISSUER);
+    }
+
+    #[test]
+    fn access_token_has_valid_expiry() {
+        let user_id = Uuid::new_v4();
+        let before = Utc::now().timestamp();
+        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let after = Utc::now().timestamp();
+        let data = decode_token(&token, TEST_SECRET);
+
+        let expected_exp_min = before + (15 * 60);
+        let expected_exp_max = after + (15 * 60);
+        assert!(
+            data.claims.exp >= expected_exp_min && data.claims.exp <= expected_exp_max,
+            "Token expiry should be ~15 minutes from creation"
+        );
+    }
+
+    #[test]
+    fn access_token_rejects_wrong_secret() {
+        let user_id = Uuid::new_v4();
+        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+
+        let result = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret("wrong-secret".as_bytes()),
+            &Validation::default(),
+        );
+        assert!(result.is_err(), "Token should fail with wrong secret");
+    }
+
+    // ── Refresh token ──────────────────────────────────────────────
+
+    #[test]
+    fn refresh_token_contains_correct_type() {
+        let user_id = Uuid::new_v4();
+        let token = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+        let data = decode_token(&token, TEST_SECRET);
+
+        assert_eq!(data.claims.typ, "refresh");
+        assert_eq!(data.claims.sub, user_id.to_string());
+    }
+
+    #[test]
+    fn refresh_token_expiry_is_in_days() {
+        let user_id = Uuid::new_v4();
+        let before = Utc::now().timestamp();
+        let token = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+        let after = Utc::now().timestamp();
+        let data = decode_token(&token, TEST_SECRET);
+
+        // 30 days = 30 * 86400 seconds
+        let expected_exp_min = before + (30 * 86400);
+        let expected_exp_max = after + (30 * 86400);
+        assert!(
+            data.claims.exp >= expected_exp_min && data.claims.exp <= expected_exp_max,
+            "Refresh token expiry should be ~30 days from creation"
+        );
+    }
+
+    // ── Token differentiation ──────────────────────────────────────
+
+    #[test]
+    fn access_and_refresh_tokens_have_different_types() {
+        let user_id = Uuid::new_v4();
+        let access = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let refresh = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+
+        let access_data = decode_token(&access, TEST_SECRET);
+        let refresh_data = decode_token(&refresh, TEST_SECRET);
+
+        assert_eq!(access_data.claims.typ, "access");
+        assert_eq!(refresh_data.claims.typ, "refresh");
+    }
+
+    // ── AuthUser extractor ─────────────────────────────────────────
+
+    #[test]
+    fn auth_user_extracts_user_id() {
+        let user_id = Uuid::new_v4();
+        let claims = Claims {
+            sub: user_id.to_string(),
+            typ: "access".into(),
+            iss: ISSUER.into(),
+            iat: Utc::now().timestamp(),
+            exp: (Utc::now() + Duration::hours(1)).timestamp(),
+        };
+        let auth_user = AuthUser { claims };
+        assert_eq!(auth_user.user_id(), user_id);
+    }
+
+    #[test]
+    fn auth_user_claims_accessor() {
+        let claims = Claims {
+            sub: Uuid::new_v4().to_string(),
+            typ: "access".into(),
+            iss: ISSUER.into(),
+            iat: 1000,
+            exp: 2000,
+        };
+        let auth_user = AuthUser { claims };
+        assert_eq!(auth_user.claims().iat, 1000);
+        assert_eq!(auth_user.claims().exp, 2000);
+    }
+}

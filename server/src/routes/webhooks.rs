@@ -20,7 +20,7 @@ async fn momo_webhook(
     let body_str = String::from_utf8(body.to_vec())
         .map_err(|e| crate::error::AppError::BadRequest(format!("Invalid UTF-8 body: {e}")))?;
     PaymentService::handle_momo_webhook(&state.pool, &body_str).await?;
-    Ok(Json(serde_json::json!({ "resultCode": 0 })))
+    Ok(Json(serde_json::json!({ "resultCode": 0 }))) // reached only after implementation
 }
 
 /// `POST /webhooks/zalopay` — ZaloPay payment callback.

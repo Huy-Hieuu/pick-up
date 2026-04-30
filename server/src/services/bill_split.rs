@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::game::BillSplit;
 
 /// Result of the pure bill-split calculation.
@@ -36,26 +36,27 @@ impl BillSplitService {
         // 4. creator pays per_player + remainder
         // 5. JOIN payments for status
         tracing::info!(%game_id, "Bill split calculation requested (stub)");
-        Err(crate::error::AppError::BadRequest("Not implemented".into()))
+        Err(AppError::Unimplemented("Bill split calculation not yet implemented".into()))
     }
 }
 
 /// Pure calculation helper — no DB access, easy to unit test.
-pub fn calculate_split(total_amount: i32, player_count: i32) -> SplitResult {
-    if player_count == 0 {
-        return SplitResult {
-            per_player: 0,
-            remainder: 0,
-            creator_pays_extra: false,
-        };
+///
+/// Returns an error for invalid inputs (zero/negative player count or negative total).
+pub fn calculate_split(total_amount: i32, player_count: i32) -> Result<SplitResult, &'static str> {
+    if player_count <= 0 {
+        return Err("Player count must be positive");
+    }
+    if total_amount < 0 {
+        return Err("Total amount cannot be negative");
     }
     let per_player = total_amount / player_count;
     let remainder = total_amount % player_count;
-    SplitResult {
+    Ok(SplitResult {
         per_player,
         remainder,
         creator_pays_extra: remainder > 0,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -64,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_equal_split() {
-        let result = calculate_split(200_000, 4);
+        let result = calculate_split(200_000, 4).unwrap();
         assert_eq!(result.per_player, 50_000);
         assert_eq!(result.remainder, 0);
         assert!(!result.creator_pays_extra);
@@ -72,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_uneven_split() {
-        let result = calculate_split(200_000, 3);
+        let result = calculate_split(200_000, 3).unwrap();
         assert_eq!(result.per_player, 66_666);
         assert_eq!(result.remainder, 2);
         assert!(result.creator_pays_extra);
@@ -80,9 +81,16 @@ mod tests {
 
     #[test]
     fn test_zero_players() {
-        let result = calculate_split(200_000, 0);
-        assert_eq!(result.per_player, 0);
-        assert_eq!(result.remainder, 0);
-        assert!(!result.creator_pays_extra);
+        assert!(calculate_split(200_000, 0).is_err());
+    }
+
+    #[test]
+    fn test_negative_players() {
+        assert!(calculate_split(200_000, -3).is_err());
+    }
+
+    #[test]
+    fn test_negative_total() {
+        assert!(calculate_split(-5000, 3).is_err());
     }
 }

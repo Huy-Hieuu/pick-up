@@ -48,6 +48,7 @@ pub struct CreateGameRequest {
     pub sport_type: SportType,
     #[validate(range(min = 2, max = 50))]
     pub max_players: i32,
+    #[validate(length(max = 500, message = "Description must be under 500 characters"))]
     pub description: Option<String>,
 }
 
@@ -90,4 +91,115 @@ pub struct PlayerPayment {
     pub display_name: Option<String>,
     pub amount: i32,
     pub paid: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use validator::Validate;
+
+    // ── CreateGameRequest ──────────────────────────────────────────
+
+    #[test]
+    fn create_game_valid() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 10,
+            description: Some("Friendly match".into()),
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn create_game_min_players() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::MiniFootball,
+            max_players: 2, // minimum
+            description: None,
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn create_game_below_min_players() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 1, // below min of 2
+            description: None,
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn create_game_max_players() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 50, // maximum
+            description: None,
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn create_game_above_max_players() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 51, // above max of 50
+            description: None,
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn create_game_description_max_length() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 4,
+            description: Some("x".repeat(500)), // exactly 500
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn create_game_description_too_long() {
+        let req = CreateGameRequest {
+            court_slot_id: Uuid::new_v4(),
+            sport_type: SportType::Pickleball,
+            max_players: 4,
+            description: Some("x".repeat(501)), // over limit
+        };
+        assert!(req.validate().is_err());
+    }
+
+    // ── GameStatus ─────────────────────────────────────────────────
+
+    #[test]
+    fn game_status_serde_roundtrip() {
+        let statuses = vec![GameStatus::Open, GameStatus::Full, GameStatus::InProgress, GameStatus::Completed, GameStatus::Cancelled];
+        for status in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            let parsed: GameStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, parsed);
+        }
+    }
+
+    #[test]
+    fn game_status_serializes_to_snake_case() {
+        assert_eq!(serde_json::to_string(&GameStatus::InProgress).unwrap(), "\"in_progress\"");
+        assert_eq!(serde_json::to_string(&GameStatus::Open).unwrap(), "\"open\"");
+    }
+
+    // ── SportType ──────────────────────────────────────────────────
+
+    #[test]
+    fn sport_type_serializes_to_snake_case() {
+        assert_eq!(serde_json::to_string(&SportType::MiniFootball).unwrap(), "\"mini_football\"");
+        assert_eq!(serde_json::to_string(&SportType::Pickleball).unwrap(), "\"pickleball\"");
+    }
 }

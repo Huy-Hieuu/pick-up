@@ -1,8 +1,11 @@
-#!/bin/sh
 set -e
 
 echo "Waiting for MinIO to be ready..."
-sleep 5
+until mc ready local > /dev/null 2>&1; do
+  sleep 1
+done
+
+echo "MinIO is ready. Starting initialization..."
 
 # Create alias
 mc alias set local http://localhost:9000 minioadmin minioadmin
@@ -10,7 +13,6 @@ mc alias set local http://localhost:9000 minioadmin minioadmin
 # Create bucket if not exists
 mc mb local/pickup-media --ignore-existing
 
-# Set anonymous upload policy
 cat > /tmp/policy.json << 'EOF'
 {
   "Version": "2012-10-17",
@@ -19,7 +21,7 @@ cat > /tmp/policy.json << 'EOF'
       "Sid": "AllowUpload",
       "Effect": "Allow",
       "Principal": {"AWS": ["*"]},
-      "Action": ["s3:PutObject", "s3:PutObjectAcl"],
+      "Action": ["s3:PutObject"],
       "Resource": "arn:aws:s3:::pickup-media/*"
     },
     {

@@ -6,7 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use crate::extractors::AuthUser;
+use crate::extractors::{AuthUser, ValidatedJson};
 use crate::models::game::{CreateGameRequest, GameDetail, GameRow, ListGamesQuery, UpdateStatusRequest};
 use crate::services::{GameService, BillSplitService};
 use crate::models::game::BillSplit;
@@ -37,7 +37,7 @@ async fn list_games(
 async fn create_game(
     State(state): State<AppState>,
     auth: AuthUser,
-    Json(req): Json<CreateGameRequest>,
+    ValidatedJson(req): ValidatedJson<CreateGameRequest>,
 ) -> AppResult<Json<GameDetail>> {
     let game = GameService::create_game(&state.pool, auth.user_id(), req).await?;
     Ok(Json(game))
@@ -46,6 +46,7 @@ async fn create_game(
 /// `GET /games/:id` — get game detail.
 async fn get_game(
     State(state): State<AppState>,
+    _auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<GameDetail>> {
     let game = GameService::get_game(&state.pool, game_id).await?;
@@ -96,6 +97,7 @@ async fn update_status(
 /// `GET /games/:id/split` — get current bill split.
 async fn get_split(
     State(state): State<AppState>,
+    _auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<BillSplit>> {
     let split = BillSplitService::calculate(&state.pool, game_id).await?;
@@ -104,9 +106,12 @@ async fn get_split(
 
 /// `GET /games/:id/share` — generate share deeplink.
 async fn get_share_link(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    _auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    // Verify the game exists before generating a share link.
+    let _game = GameService::get_game(&state.pool, game_id).await?;
     // TODO: Generate Zalo deeplink for game sharing
     Ok(Json(serde_json::json!({
         "deeplink": format!("pickup://games/{game_id}"),

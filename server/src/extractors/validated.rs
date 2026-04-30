@@ -120,3 +120,69 @@ pub fn is_valid_vn_phone(phone: &str) -> Result<(), validator::ValidationError> 
         Err(err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Valid Vietnamese phones ────────────────────────────────────
+
+    #[test]
+    fn accepts_zero_prefix_mobile() {
+        assert!(is_valid_vn_phone("0912345678").is_ok());
+    }
+
+    #[test]
+    fn accepts_plus84_prefix_mobile() {
+        assert!(is_valid_vn_phone("+84912345678").is_ok());
+    }
+
+    #[test]
+    fn accepts_various_mobile_prefixes() {
+        // Vietnamese mobile prefixes: 3x, 5x, 7x, 8x, 9x
+        assert!(is_valid_vn_phone("0321234567").is_ok()); // Viettel 032
+        assert!(is_valid_vn_phone("0521234567").is_ok()); // Vietnamobile 052
+        assert!(is_valid_vn_phone("0761234567").is_ok()); // Mobifone 076
+        assert!(is_valid_vn_phone("0812345678").is_ok()); // Vinaphone 081
+        assert!(is_valid_vn_phone("0912345678").is_ok()); // Mobifone 091
+    }
+
+    // ── Invalid Vietnamese phones ──────────────────────────────────
+
+    #[test]
+    fn rejects_empty_string() {
+        assert!(is_valid_vn_phone("").is_err());
+    }
+
+    #[test]
+    fn rejects_too_short() {
+        assert!(is_valid_vn_phone("0912345").is_err());
+    }
+
+    #[test]
+    fn rejects_too_long() {
+        assert!(is_valid_vn_phone("091234567890").is_err());
+    }
+
+    #[test]
+    fn rejects_letters() {
+        assert!(is_valid_vn_phone("09abc4567").is_err());
+    }
+
+    #[test]
+    fn rejects_no_prefix() {
+        // Missing 0 or +84 prefix
+        assert!(is_valid_vn_phone("912345678").is_err());
+    }
+
+    #[test]
+    fn rejects_wrong_country_code() {
+        assert!(is_valid_vn_phone("+6691234567").is_err());
+    }
+
+    #[test]
+    fn rejects_special_characters() {
+        assert!(is_valid_vn_phone("0912-34567").is_err());
+        assert!(is_valid_vn_phone("0912 34567").is_err());
+    }
+}

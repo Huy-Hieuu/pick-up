@@ -40,10 +40,11 @@ tokio-native-tls = "0.3"
 argon2 = "0.5"
 hex = "0.4"
 rand = "0.8"
+constant_time_eq = "0.3"
 urlencoding = "2"
 
 # Types & utilities
-uuid = { version = "1", features = ["v7", "serde"] }
+uuid = { version = "1", features = ["v7", "v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 anyhow = "1"
