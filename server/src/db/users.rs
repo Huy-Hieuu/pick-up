@@ -5,7 +5,7 @@ use argon2::{
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::models::user::UserRow;
+use crate::models::user::{PatchValue, UserRow};
 
 pub async fn find_user_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<UserRow>> {
     sqlx::query_as::<_, UserRow>(
@@ -70,24 +70,44 @@ pub async fn create_user(
     .await
 }
 
-pub async fn update_user_profile(
+/// Update user profile using PatchValue to distinguish absent / null / set.
+///
+/// For each field:
+/// - `Absent` → keep current value (CASE WHEN false)
+/// - `Null`   → set to NULL
+/// - `Value`  → set to new value
+pub async fn update_user_profile_patch(
     pool: &PgPool,
     user_id: Uuid,
-    display_name: Option<&str>,
-    avatar_url: Option<&str>,
+    display_name: &PatchValue<String>,
+    avatar_url: &PatchValue<String>,
 ) -> sqlx::Result<UserRow> {
+    let (dn_provided, dn_value): (bool, Option<&str>) = match display_name {
+        PatchValue::Absent => (false, None),
+        PatchValue::Null => (true, None),
+        PatchValue::Value(v) => (true, Some(v)),
+    };
+    let (av_provided, av_value): (bool, Option<&str>) = match avatar_url {
+        PatchValue::Absent => (false, None),
+        PatchValue::Null => (true, None),
+        PatchValue::Value(v) => (true, Some(v)),
+    };
+
     sqlx::query_as::<_, UserRow>(
         r#"
         UPDATE users
-        SET display_name = COALESCE($2, display_name),
-            avatar_url = COALESCE($3, avatar_url)
+        SET display_name = CASE WHEN $2 THEN $3 ELSE display_name END,
+            avatar_url   = CASE WHEN $4 THEN $5 ELSE avatar_url END,
+            updated_at    = NOW()
         WHERE id = $1
         RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
         "#,
     )
     .bind(user_id)
-    .bind(display_name)
-    .bind(avatar_url)
+    .bind(dn_provided)
+    .bind(dn_value)
+    .bind(av_provided)
+    .bind(av_value)
     .fetch_one(pool)
     .await
 }

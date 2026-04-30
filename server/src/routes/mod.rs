@@ -50,7 +50,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected_routes)
         .merge(payment_routes)
         .route("/ws/games/{game_id}", get(crate::ws::lobby::ws_game_lobby))
-        .with_state(state)
-        .layer(crate::middleware::cors::cors_layer())
+        .with_state(state.clone())
+        .layer(crate::middleware::cors::cors_layer(&state.settings))
         .layer(tower_http::trace::TraceLayer::new_for_http())
 }

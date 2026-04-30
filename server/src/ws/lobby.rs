@@ -1,12 +1,14 @@
 use axum::{
-    extract::{Path, State, WebSocketUpgrade},
-    response::IntoResponse,
+    extract::{Path, Query, State, WebSocketUpgrade},
+    response::{IntoResponse, Response},
+    http::StatusCode,
 };
 use axum::extract::ws::{Message, WebSocket};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use crate::extractors::auth::Claims;
 use crate::state::AppState;
 
 /// Maximum allowed WebSocket message size (64 KB).
@@ -18,8 +20,14 @@ const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 /// Timeout for receiving a pong response.
 const PONG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Query params for WebSocket authentication.
+#[derive(Debug, Deserialize)]
+pub struct WsAuth {
+    pub token: String,
+}
+
 /// Messages broadcast from server → clients in a game lobby.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LobbyEvent {
     PlayerJoined { user_id: Uuid, display_name: Option<String> },
@@ -38,10 +46,34 @@ pub async fn ws_game_lobby(
     ws: WebSocketUpgrade,
     Path(game_id): Path<Uuid>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    // TODO: Extract and validate JWT from query string before accepting.
+    Query(auth): Query<WsAuth>,
+) -> Response {
+    // Validate JWT before accepting the upgrade.
+    if verify_ws_token(&auth.token, &state.settings.jwt.secret).is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({
+                "error": { "code": "UNAUTHORIZED", "message": "Invalid or missing token" }
+            })),
+        ).into_response();
+    }
+
     ws.max_frame_size(MAX_MESSAGE_SIZE)
       .on_upgrade(move |socket| handle_socket(socket, game_id, state))
+      .into_response()
+}
+
+/// Verify JWT for WebSocket connections. Returns Claims if valid.
+fn verify_ws_token(token: &str, secret: &str) -> Option<Claims> {
+    use jsonwebtoken::{decode, DecodingKey, Validation};
+
+    let mut validation = Validation::default();
+    validation.set_issuer(&["pickup-server"]);
+
+    decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
+        .ok()
+        .filter(|data| data.claims.typ == "access")
+        .map(|data| data.claims)
 }
 
 async fn handle_socket(mut socket: WebSocket, game_id: Uuid, _state: AppState) {
@@ -51,10 +83,9 @@ async fn handle_socket(mut socket: WebSocket, game_id: Uuid, _state: AppState) {
     let mut ping_interval = tokio::time::interval(PING_INTERVAL);
 
     // TODO:
-    // 1. Authenticate via JWT from query param
-    // 2. Subscribe to game_id channel (e.g., tokio broadcast)
-    // 3. Broadcast outgoing LobbyEvent messages to this socket
-    // 4. Handle disconnect (remove from subscriber list)
+    // 1. Subscribe to game_id channel (e.g., tokio broadcast)
+    // 2. Broadcast outgoing LobbyEvent messages to this socket
+    // 3. Handle disconnect (remove from subscriber list)
 
     loop {
         tokio::select! {
@@ -80,10 +111,12 @@ async fn handle_socket(mut socket: WebSocket, game_id: Uuid, _state: AppState) {
                         break;
                     }
                     Some(Ok(Message::Ping(data))) => {
-                        last_pong = Instant::now();
+                        // Respond to client pings — but don't reset last_pong
+                        // (only our own pong responses should reset the timeout).
                         let _ = socket.send(Message::Pong(data)).await;
                     }
                     Some(Ok(Message::Pong(_))) => {
+                        // Only reset timeout on pong responses to OUR pings.
                         last_pong = Instant::now();
                     }
                     Some(Ok(Message::Close(_))) => break,

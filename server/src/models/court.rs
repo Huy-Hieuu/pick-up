@@ -54,7 +54,7 @@ pub struct CourtSlotRow {
 // ── Query DTOs ──────────────────────────────────────────────────
 
 /// Query params for `GET /courts/:id/slots`. Date is required per spec.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct SlotListQuery {
     pub date: NaiveDate,
 }
@@ -108,7 +108,7 @@ pub struct CourtDetail {
 
 #[derive(Debug, Serialize)]
 pub struct Paginated<T> {
-    #[serde(rename = "courts")]
+    #[serde(rename = "items")]
     pub data: Vec<T>,
     pub total: i64,
     pub page: i64,

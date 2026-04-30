@@ -62,12 +62,23 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
         parts: &mut Parts,
         state: &crate::state::AppState,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        // Extract from extensions and headers BEFORE the async block.
+        let claims_from_ext = parts.extensions.get::<Claims>().cloned();
+        let auth_header = parts
+            .headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|h| h.to_string());
         let secret = state.settings.jwt.secret.clone();
+
         async move {
-            let auth_header = parts
-                .headers
-                .get("Authorization")
-                .and_then(|v| v.to_str().ok())
+            // Fast path: read Claims injected by require_auth middleware.
+            if let Some(claims) = claims_from_ext {
+                return Ok(Self { claims });
+            }
+
+            // Fallback: decode JWT from header (for routes without auth middleware).
+            let auth_header = auth_header
                 .ok_or_else(|| {
                     AuthRejection(AppError::Unauthorized("Missing Authorization header".into()))
                 })?;

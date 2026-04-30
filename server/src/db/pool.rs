@@ -7,7 +7,7 @@ use crate::config::DatabaseSettings;
 /// Runs pending migrations automatically in development.
 pub async fn create_pool(settings: &DatabaseSettings) -> anyhow::Result<PgPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(20)
+        .max_connections(settings.max_connections)
         .connect(&settings.url)
         .await?;
 
@@ -17,6 +17,9 @@ pub async fn create_pool(settings: &DatabaseSettings) -> anyhow::Result<PgPool> 
         .await
         .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
 
-    tracing::info!("Database pool created and migrations applied");
+    tracing::info!(
+        max_connections = settings.max_connections,
+        "Database pool created and migrations applied"
+    );
     Ok(pool)
 }

@@ -67,6 +67,7 @@ impl GameService {
             games,
             total,
             page: query.pagination.page(),
+            per_page: limit,
         })
     }
 

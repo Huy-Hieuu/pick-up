@@ -12,7 +12,7 @@ use crate::models::otp::{
     LoginRequest, RegisterRequest, SetNewPasswordRequest, SetNewPasswordResponse,
     VerifyOtpRequest, VerifyResetOtpRequest, VerifyResetOtpResponse,
 };
-use crate::models::user::{AuthResponse, UpdateProfileRequest, UserProfile};
+use crate::models::user::{AuthResponse, PatchValue, UpdateProfileRequest, UserProfile};
 
 pub struct AuthService;
 
@@ -51,6 +51,7 @@ impl AuthService {
         redis: &ConnectionManager,
         req: VerifyOtpRequest,
         max_attempts: i16,
+        otp_ttl_seconds: i64,
         jwt_secret: &str,
         access_ttl_minutes: i64,
         refresh_ttl_days: i64,
@@ -85,7 +86,9 @@ impl AuthService {
 
         if new_count > max_attempts as i32 {
             // Re-store the OTP so the user can retry (they haven't used it yet).
-            let _: () = conn.set_ex(&otp_key, &stored, 60)
+            // Use original TTL instead of hardcoded 60s to avoid shortening.
+            let restore_ttl = std::cmp::max(otp_ttl_seconds, 30) as u64;
+            let _: () = conn.set_ex(&otp_key, &stored, restore_ttl)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
             return Err(AppError::BadRequest("Too many attempts".into()));
@@ -94,8 +97,9 @@ impl AuthService {
         // Constant-time comparison to prevent timing attacks.
         if !constant_time_eq(stored.as_bytes(), req.code.as_bytes()) {
             // OTP was consumed via GETDEL but didn't match — restore it so the
-            // user can retry with remaining attempts.
-            let _: () = conn.set_ex(&otp_key, &stored, 60)
+            // user can retry with remaining attempts. Preserve original TTL.
+            let restore_ttl = std::cmp::max(otp_ttl_seconds, 30) as u64;
+            let _: () = conn.set_ex(&otp_key, &stored, restore_ttl)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
             tracing::warn!(email = %req.email, attempts = %new_count, "Invalid OTP");
@@ -197,8 +201,24 @@ impl AuthService {
         user_id: Uuid,
         req: UpdateProfileRequest,
     ) -> AppResult<UserProfile> {
-        let display_name = req.display_name.as_deref().map(|s| s.trim());
-        let row = db::update_user_profile(pool, user_id, display_name, req.avatar_url.as_deref())
+        // Trim display_name; convert empty string to Null.
+        let display_name = match &req.display_name {
+            PatchValue::Value(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    PatchValue::Null
+                } else if trimmed.len() > 50 {
+                    return Err(AppError::BadRequest(
+                        "Display name must be 1–50 characters".into(),
+                    ));
+                } else {
+                    PatchValue::Value(trimmed.to_string())
+                }
+            }
+            other => other.clone(),
+        };
+
+        let row = db::update_user_profile_patch(pool, user_id, &display_name, &req.avatar_url)
             .await
             .map_err(AppError::Database)?;
         Ok(row.into())

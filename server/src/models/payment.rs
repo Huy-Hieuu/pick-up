@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
+use validator::Validate;
 
 // ── Enums ──────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ pub struct PaymentRow {
 
 // ── Request DTOs ───────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct InitiatePaymentRequest {
     pub provider: PaymentProvider,
 }

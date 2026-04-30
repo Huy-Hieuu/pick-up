@@ -5,6 +5,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use super::court::{Pagination, SportType};
+use super::payment::PaymentStatus;
 
 // ── Enums ──────────────────────────────────────────────────────
 
@@ -17,16 +18,6 @@ pub enum GameStatus {
     InProgress,
     Completed,
     Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "payment_status", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentStatus {
-    Pending,
-    Paid,
-    Expired,
-    Refunded,
 }
 
 // ── Database row types ─────────────────────────────────────────
@@ -75,7 +66,7 @@ pub struct ListGamesQuery {
     pub pagination: Pagination,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct UpdateStatusRequest {
     pub status: GameStatus,
 }
@@ -119,6 +110,7 @@ pub struct GameListResponse {
     pub games: Vec<GameListItem>,
     pub total: i64,
     pub page: i64,
+    pub per_page: i64,
 }
 
 /// Brief court info nested in game list items.

@@ -22,8 +22,9 @@ pub struct VerifyOtpRequest {
     pub code: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct RefreshTokenRequest {
+    #[validate(length(min = 1, message = "refresh_token is required"))]
     pub refresh_token: String,
 }
 

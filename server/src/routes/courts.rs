@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     routing::{get, post},
     Json, Router,
 };
@@ -45,7 +45,7 @@ async fn get_court(
 async fn list_slots(
     State(state): State<AppState>,
     Path(court_id): Path<Uuid>,
-    Query(query): Query<SlotListQuery>,
+    ValidatedQuery(query): ValidatedQuery<SlotListQuery>,
 ) -> AppResult<Json<SlotListResponse>> {
     let result = CourtService::list_slots(&state.pool, court_id, query.date).await?;
     Ok(Json(result))

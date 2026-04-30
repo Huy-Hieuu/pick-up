@@ -6,7 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use crate::extractors::AuthUser;
+use crate::extractors::{AuthUser, ValidatedJson};
 use crate::models::payment::{InitiatePaymentRequest, PaymentResponse, PaymentRow};
 use crate::services::PaymentService;
 use crate::state::AppState;
@@ -32,7 +32,7 @@ async fn initiate_payment(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(game_id): Path<Uuid>,
-    Json(req): Json<InitiatePaymentRequest>,
+    ValidatedJson(req): ValidatedJson<InitiatePaymentRequest>,
 ) -> AppResult<Json<PaymentResponse>> {
     let payment = PaymentService::initiate(&state.pool, game_id, auth.user_id(), req).await?;
     Ok(Json(payment))

@@ -21,11 +21,13 @@ pub struct Settings {
 pub struct AppSettings {
     pub host: String,
     pub port: u16,
+    pub cors_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DatabaseSettings {
     pub url: String,
+    pub max_connections: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -99,10 +101,23 @@ impl Settings {
                     anyhow::ensure!(port > 0, "APP_PORT must be between 1 and 65535");
                     port
                 },
+                cors_origins: env::var("CORS_ORIGINS")
+                    .unwrap_or_else(|_| "*".into())
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
             },
             database: DatabaseSettings {
                 url: env::var("DATABASE_URL")
                     .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?,
+                max_connections: {
+                    let n: u32 = env::var("DB_MAX_CONNECTIONS")
+                        .unwrap_or_else(|_| "20".into())
+                        .parse()?;
+                    anyhow::ensure!(n > 0, "DB_MAX_CONNECTIONS must be positive");
+                    n
+                },
             },
             redis: RedisSettings {
                 url: env::var("REDIS_URL")

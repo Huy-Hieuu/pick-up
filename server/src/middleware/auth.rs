@@ -10,12 +10,11 @@ use crate::state::AppState;
 
 /// Auth middleware that verifies JWT on protected routes.
 ///
-/// Short-circuits with 401 if no valid token is present.
-/// Handlers should still use `AuthUser` extractor for user ID access.
-/// This middleware exists as a safety net in case a handler forgets the extractor.
+/// Decodes the JWT and injects `Claims` into request extensions so that
+/// the `AuthUser` extractor can read them without re-decoding.
 pub async fn require_auth(
     axum::extract::State(state): axum::extract::State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let secret = &state.settings.jwt.secret;
@@ -32,14 +31,18 @@ pub async fn require_auth(
         None => return unauthorized("Missing Authorization header"),
     };
 
-    if let Err(response) = verify_token(token, secret) {
-        return response;
+    match verify_token(token, secret) {
+        Ok(claims) => {
+            // Inject decoded claims into request extensions — avoids double decode.
+            request.extensions_mut().insert(claims);
+        }
+        Err(response) => return response,
     }
 
     next.run(request).await
 }
 
-fn verify_token(token: &str, secret: &str) -> Result<(), Response> {
+fn verify_token(token: &str, secret: &str) -> Result<Claims, Response> {
     use jsonwebtoken::{decode, DecodingKey, Validation};
 
     let mut validation = Validation::default();
@@ -56,7 +59,7 @@ fn verify_token(token: &str, secret: &str) -> Result<(), Response> {
         return Err(unauthorized("Invalid token type"));
     }
 
-    Ok(())
+    Ok(token_data.claims)
 }
 
 fn unauthorized(msg: &str) -> Response {

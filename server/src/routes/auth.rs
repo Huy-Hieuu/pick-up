@@ -20,12 +20,13 @@ use axum::{
 
 use crate::error::AppResult;
 use crate::extractors::{AuthUser, ValidatedJson};
-use crate::models::user::{AuthResponse, UpdateProfileRequest, UserProfile};
+use crate::models::user::{AuthResponse, UserProfile};
 use crate::models::otp::{
     ForgotPasswordRequest, LoginRequest, RefreshTokenRequest, RegisterRequest,
     SendOtpRequest, SetNewPasswordRequest, SetNewPasswordResponse,
     VerifyOtpRequest, VerifyResetOtpRequest, VerifyResetOtpResponse,
 };
+use crate::models::user::UpdateProfileRequest;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -65,6 +66,7 @@ async fn verify_otp(
         &state.redis,
         req,
         state.settings.redis.otp_max_attempts,
+        state.settings.redis.otp_ttl_seconds,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
         state.settings.jwt.refresh_ttl_days,
@@ -76,7 +78,7 @@ async fn verify_otp(
 /// `POST /auth/refresh` — refresh access token.
 async fn refresh_token(
     State(state): State<AppState>,
-    Json(req): Json<RefreshTokenRequest>,
+    ValidatedJson(req): ValidatedJson<RefreshTokenRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     let resp = crate::services::AuthService::refresh_token(
         &state.pool,
@@ -180,7 +182,7 @@ async fn get_me(
 async fn update_me(
     State(state): State<AppState>,
     auth: AuthUser,
-    ValidatedJson(req): ValidatedJson<UpdateProfileRequest>,
+    Json(req): Json<UpdateProfileRequest>,
 ) -> AppResult<Json<UserProfile>> {
     let profile = crate::services::AuthService::update_profile(&state.pool, auth.user_id(), req).await?;
     Ok(Json(profile))

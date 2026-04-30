@@ -32,7 +32,7 @@ pub async fn list_games_all_joined(
         r#"
         SELECT
             g.id, g.sport_type, g.max_players, g.status,
-            (SELECT COUNT(*) FROM game_players WHERE game_id = g.id) AS current_players,
+            COALESCE(pc.cnt, 0) AS current_players,
             c.id AS court_id, c.name AS court_name, c.address AS court_address,
             NULL::double precision AS distance_km,
             cs.start_time AS slot_start_time, cs.end_time AS slot_end_time,
@@ -41,6 +41,7 @@ pub async fn list_games_all_joined(
         JOIN court_slots cs ON cs.id = g.court_slot_id
         JOIN courts c ON c.id = cs.court_id
         JOIN users u ON u.id = g.creator_id
+        LEFT JOIN (SELECT game_id, COUNT(*)::int8 AS cnt FROM game_players GROUP BY game_id) pc ON pc.game_id = g.id
         WHERE (
             ($1::game_status IS NULL AND g.status IN ('open', 'full'))
             OR ($1::game_status IS NOT NULL AND g.status = $1)
@@ -78,7 +79,7 @@ pub async fn list_games_near_joined(
         SELECT * FROM (
             SELECT
                 g.id, g.sport_type, g.max_players, g.status,
-                (SELECT COUNT(*) FROM game_players WHERE game_id = g.id) AS current_players,
+                COALESCE(pc.cnt, 0) AS current_players,
                 c.id AS court_id, c.name AS court_name, c.address AS court_address,
                 (6371 * acos(LEAST(1.0,
                     cos(radians($1)) * cos(radians(c.lat)) *
@@ -91,6 +92,7 @@ pub async fn list_games_near_joined(
             JOIN court_slots cs ON cs.id = g.court_slot_id
             JOIN courts c ON c.id = cs.court_id
             JOIN users u ON u.id = g.creator_id
+            LEFT JOIN (SELECT game_id, COUNT(*)::int8 AS cnt FROM game_players GROUP BY game_id) pc ON pc.game_id = g.id
             WHERE (
                 ($3::game_status IS NULL AND g.status IN ('open', 'full'))
                 OR ($3::game_status IS NOT NULL AND g.status = $3)

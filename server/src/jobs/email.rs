@@ -12,11 +12,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::EmailSettings;
 
+const MAX_RETRIES: u8 = 3;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailJob {
     pub to: String,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub retry_count: u8,
 }
 
 /// Enqueue an email job to be sent by the background worker.
@@ -30,6 +34,7 @@ pub async fn enqueue_email(
         to: to.to_string(),
         subject: subject.to_string(),
         body: body.to_string(),
+        retry_count: 0,
     };
     let payload = serde_json::to_string(&job).map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("JSON serialize error: {e}")))?;
     let mut conn = redis.clone();
@@ -116,8 +121,8 @@ async fn process_one_email(
     let email = lettre::Message::builder()
         .from(from)
         .to(to)
-        .subject(job.subject)
-        .body(job.body)
+        .subject(job.subject.clone())
+        .body(job.body.clone())
         .map_err(|e| anyhow::anyhow!("Failed to build email: {e}"))?;
 
     let credentials = Credentials::new(
@@ -133,10 +138,38 @@ async fn process_one_email(
         .authentication(vec![Mechanism::Login])
         .build();
 
-    mailer.send(email).await.map_err(|e| {
-        tracing::error!(%e, to = %job.to, "SMTP send failed");
-        anyhow::anyhow!("SMTP send failed: {e}")
-    })?;
+    if let Err(e) = mailer.send(email).await {
+        tracing::error!(%e, to = %job.to, retry = job.retry_count, "SMTP send failed");
+
+        if job.retry_count >= MAX_RETRIES {
+            // Max retries reached — move to dead-letter queue.
+            let mut conn = redis.clone();
+            let _: () = redis::cmd("LPUSH")
+                .arg("email:dead")
+                .arg(&payload)
+                .query_async(&mut conn)
+                .await
+                .map_err(|re| anyhow::anyhow!("Failed to push to dead-letter queue: {re}"))?;
+            return Err(anyhow::anyhow!(
+                "SMTP send failed after {MAX_RETRIES} retries for {}: {e}", job.to
+            ));
+        }
+
+        // Re-queue with incremented retry count (RPUSH → back of queue).
+        let mut retry_job = job.clone();
+        retry_job.retry_count += 1;
+        let retry_payload = serde_json::to_string(&retry_job)
+            .map_err(|e| anyhow::anyhow!("JSON serialize error: {e}"))?;
+        let mut conn = redis.clone();
+        let _: () = redis::cmd("RPUSH")
+            .arg("email:queue")
+            .arg(&retry_payload)
+            .query_async(&mut conn)
+            .await
+            .map_err(|re| anyhow::anyhow!("Failed to re-queue email: {re}"))?;
+
+        return Err(anyhow::anyhow!("SMTP send failed, re-queued (attempt {}/{MAX_RETRIES}): {e}", job.retry_count + 1));
+    }
 
     tracing::info!(to = %job.to, "Email sent successfully");
     Ok(())
@@ -154,6 +187,7 @@ mod tests {
             to: "user@example.com".to_string(),
             subject: "Test Subject".to_string(),
             body: "Hello, world!".to_string(),
+            retry_count: 0,
         };
         let json = serde_json::to_string(&job).unwrap();
         let parsed: EmailJob = serde_json::from_str(&json).unwrap();
@@ -169,6 +203,7 @@ mod tests {
             to: "test@pickup.app".to_string(),
             subject: "Your code is 123456".to_string(),
             body: "Use this code to verify.".to_string(),
+            retry_count: 0,
         };
         let json = serde_json::to_string(&job).unwrap();
 
@@ -199,6 +234,7 @@ mod tests {
             to: "user@example.com".to_string(),
             subject: "Mã xác nhận PickUp".to_string(),
             body: "Mã của bạn là: 123456\nMã có hiệu lực trong 5 phút.".to_string(),
+            retry_count: 0,
         };
         let json = serde_json::to_string(&job).unwrap();
         let parsed: EmailJob = serde_json::from_str(&json).unwrap();
@@ -211,6 +247,7 @@ mod tests {
             to: "user@example.com".to_string(),
             subject: "Welcome to PickUp! 🎾 Courts & Games".to_string(),
             body: "Let's play!".to_string(),
+            retry_count: 0,
         };
         let json = serde_json::to_string(&job).unwrap();
         let parsed: EmailJob = serde_json::from_str(&json).unwrap();

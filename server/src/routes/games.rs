@@ -9,10 +9,10 @@ use crate::error::AppResult;
 use crate::extractors::{AuthUser, ValidatedJson, ValidatedQuery};
 use crate::models::court::SportType;
 use crate::models::game::{
-    CreateGameRequest, GameDetail, GameListResponse, GameRow, ListGamesQuery, UpdateStatusRequest,
+    BillSplit, CreateGameRequest, GameDetail, GameListResponse, GameRow, ListGamesQuery,
+    UpdateStatusRequest,
 };
 use crate::services::{BillSplitService, GameService};
-use crate::models::game::BillSplit;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -91,7 +91,7 @@ async fn update_status(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(game_id): Path<Uuid>,
-    Json(req): Json<UpdateStatusRequest>,
+    ValidatedJson(req): ValidatedJson<UpdateStatusRequest>,
 ) -> AppResult<Json<GameRow>> {
     let game = GameService::update_status(&state.pool, game_id, auth.user_id(), req.status).await?;
     Ok(Json(game))
