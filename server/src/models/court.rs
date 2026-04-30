@@ -4,6 +4,8 @@ use sqlx::FromRow;
 use uuid::Uuid;
 use validator::Validate;
 
+use super::query;
+
 // ── Enums ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -64,7 +66,9 @@ pub struct SlotListQuery {
 /// Shared pagination parameters with safe bounds.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Pagination {
+    #[serde(default, deserialize_with = "query::deserialize_i64_from_str")]
     pub page: Option<i64>,
+    #[serde(default, deserialize_with = "query::deserialize_i64_from_str")]
     pub per_page: Option<i64>,
 }
 
@@ -86,8 +90,11 @@ impl Pagination {
 #[derive(Debug, Deserialize, Validate)]
 pub struct ListCourtsQuery {
     pub sport_type: Option<SportType>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     pub lat: Option<f64>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     pub lng: Option<f64>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]

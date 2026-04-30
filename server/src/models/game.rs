@@ -5,6 +5,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use super::court::{Pagination, SportType};
+use super::query;
 use super::payment::PaymentStatus;
 
 // ── Enums ──────────────────────────────────────────────────────
@@ -58,8 +59,11 @@ pub struct ListGamesQuery {
     pub sport_type: Option<SportType>,
     pub status: Option<GameStatus>,
     pub date: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     pub lat: Option<f64>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     pub lng: Option<f64>,
+    #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]
