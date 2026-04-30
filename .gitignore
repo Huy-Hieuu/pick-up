@@ -1,0 +1,10 @@
+.claude
+_bmad
+_bmad-output
+.idea
+.ai
+server/target
+server/.env
+server/Cargo.lock
+.gitnexus
+AGENTS.md
