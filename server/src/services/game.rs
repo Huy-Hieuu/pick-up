@@ -95,6 +95,15 @@ impl GameService {
         // 2. Begin tx: lock slot, re-validate, check uniqueness, insert game + player.
         let mut tx = pool.begin().await.map_err(AppError::Database)?;
 
+        // Verify sport_type matches the court (court data is immutable).
+        let court = db::courts::find_court_by_id(pool, slot.court_id).await?;
+        if court.sport_type != req.sport_type {
+            return Err(AppError::BadRequest(
+                format!("Game sport type ({:?}) does not match court sport type ({:?})",
+                    req.sport_type, court.sport_type)
+            ));
+        }
+
         let locked_slot =
             db::courts::find_slot_for_update(&mut tx, req.court_slot_id, slot.court_id).await?;
 
@@ -130,31 +139,35 @@ impl GameService {
 
         tx.commit().await.map_err(AppError::Database)?;
 
-        // Fetch court, slot, and players for the response.
-        let court = db::games::find_game_court(pool, game.id).await?;
-        let slot_brief = db::games::find_game_slot(pool, game.id).await?;
-        let players = db::games::list_players_with_profile(pool, game.id).await?;
+        // Fetch court, slot, and players concurrently for the response.
+        let (court_res, slot_res, players_res) = tokio::join!(
+            db::games::find_game_court(pool, game.id),
+            db::games::find_game_slot(pool, game.id),
+            db::games::list_players_with_profile(pool, game.id),
+        );
 
         Ok(GameDetail {
             game,
-            court,
-            slot: slot_brief,
-            players,
+            court: court_res?,
+            slot: slot_res?,
+            players: players_res?,
             split: None,
         })
     }
 
     /// Get game detail with court, slot, and player profiles.
     pub async fn get_game(pool: &PgPool, game_id: Uuid) -> AppResult<GameDetail> {
-        let game = db::games::find_game_by_id(pool, game_id).await?;
-        let court = db::games::find_game_court(pool, game_id).await?;
-        let slot = db::games::find_game_slot(pool, game_id).await?;
-        let players = db::games::list_players_with_profile(pool, game_id).await?;
+        let (game_res, court_res, slot_res, players_res) = tokio::join!(
+            db::games::find_game_by_id(pool, game_id),
+            db::games::find_game_court(pool, game_id),
+            db::games::find_game_slot(pool, game_id),
+            db::games::list_players_with_profile(pool, game_id),
+        );
         Ok(GameDetail {
-            game,
-            court,
-            slot,
-            players,
+            game: game_res?,
+            court: court_res?,
+            slot: slot_res?,
+            players: players_res?,
             split: None,
         })
     }
@@ -167,10 +180,10 @@ impl GameService {
         game_id: Uuid,
         user_id: Uuid,
     ) -> AppResult<GameDetail> {
-        // Look up slot times before tx — slot times are immutable.
-        let slot = db::games::find_game_slot(pool, game_id).await?;
-
         let mut tx = pool.begin().await.map_err(AppError::Database)?;
+
+        // Fetch slot times inside the transaction for consistency.
+        let slot = db::games::find_game_slot_tx(&mut tx, game_id).await?;
 
         // 1. Lock game row + re-read fresh status.
         let game = db::games::find_game_for_update(&mut tx, game_id).await?;
@@ -274,6 +287,12 @@ impl GameService {
             }
             _ => {}
         }
+
+        // Remove all players from the game.
+        db::games::remove_all_game_players(&mut tx, game_id).await?;
+
+        // Release the court slot back to Available.
+        db::courts::update_slot_status(&mut tx, game.court_slot_id, SlotStatus::Available, None).await?;
 
         db::games::set_game_status(&mut tx, game_id, GameStatus::Cancelled).await?;
         tx.commit().await.map_err(AppError::Database)?;

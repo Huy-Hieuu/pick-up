@@ -13,6 +13,7 @@ tower = "0.5"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 
 # Database
 sqlx = { version = "0.8", features = [

@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::borrow::Cow;
 use sqlx::FromRow;
 use uuid::Uuid;
+use validator::{Validate, ValidateUrl};
 
 // ── PatchValue ────────────────────────────────────────────────
 
@@ -27,6 +29,12 @@ pub enum PatchValue<T> {
 impl<T> PatchValue<T> {
     pub fn is_absent(&self) -> bool {
         matches!(self, PatchValue::Absent)
+    }
+}
+
+impl<T> validator::Validate for PatchValue<T> {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        Ok(())
     }
 }
 
@@ -67,6 +75,35 @@ pub struct UpdateProfileRequest {
     pub display_name: PatchValue<String>,
     #[serde(default, deserialize_with = "deserialize_patch")]
     pub avatar_url: PatchValue<String>,
+}
+
+impl Validate for UpdateProfileRequest {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        let mut errors = validator::ValidationErrors::new();
+
+        if let PatchValue::Value(ref s) = self.display_name {
+            if s.len() > 50 {
+                let mut err = validator::ValidationError::new("length");
+                err.add_param(Cow::Borrowed("max"), &50_u64);
+                err.add_param(Cow::Borrowed("value"), s);
+                errors.add("display_name", err);
+            }
+        }
+
+        if let PatchValue::Value(ref s) = self.avatar_url {
+            if !s.validate_url() {
+                let mut err = validator::ValidationError::new("url");
+                err.add_param(Cow::Borrowed("value"), s);
+                errors.add("avatar_url", err);
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 // ── Response DTOs ──────────────────────────────────────────────

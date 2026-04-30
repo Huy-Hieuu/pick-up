@@ -13,6 +13,8 @@ use crate::error::AppError;
 
 const ISSUER: &str = "pickup-server";
 
+pub const AUDIENCE: &str = "pickup-app";
+
 /// JWT claims embedded in access and refresh tokens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -22,6 +24,8 @@ pub struct Claims {
     pub typ: String,
     /// Issuer.
     pub iss: String,
+    /// Audience.
+    pub aud: String,
     /// Issued at (Unix timestamp).
     pub iat: i64,
     /// Expiration (Unix timestamp).
@@ -36,8 +40,10 @@ pub struct AuthUser {
 
 impl AuthUser {
     pub fn user_id(&self) -> uuid::Uuid {
-        uuid::Uuid::parse_str(&self.claims.sub)
-            .expect("sub claim must be a valid UUID — tokens are issued by us")
+        uuid::Uuid::parse_str(&self.claims.sub).unwrap_or_else(|_| {
+            tracing::error!(sub = %self.claims.sub, "Invalid UUID in JWT sub claim");
+            uuid::Uuid::nil()
+        })
     }
 
     pub fn claims(&self) -> &Claims {
@@ -91,6 +97,7 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
 
             let mut validation = Validation::default();
             validation.set_issuer(&[ISSUER]);
+            validation.set_audience(&[AUDIENCE]);
 
             let claims = decode::<Claims>(
                 token,
@@ -128,6 +135,7 @@ pub fn create_access_token(
         sub: user_id.to_string(),
         typ: "access".into(),
         iss: ISSUER.into(),
+        aud: AUDIENCE.into(),
         iat: now.timestamp(),
         exp: (now + Duration::minutes(ttl_minutes)).timestamp(),
     };
@@ -150,6 +158,7 @@ pub fn create_refresh_token(
         sub: user_id.to_string(),
         typ: "refresh".into(),
         iss: ISSUER.into(),
+        aud: AUDIENCE.into(),
         iat: now.timestamp(),
         exp: (now + Duration::days(ttl_days)).timestamp(),
     };
@@ -172,6 +181,7 @@ mod tests {
     fn decode_token(token: &str, secret: &str) -> jsonwebtoken::TokenData<Claims> {
         let mut validation = Validation::default();
         validation.set_issuer(&[ISSUER]);
+        validation.set_audience(&[AUDIENCE]);
         decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
             .expect("Token should decode successfully")
     }
@@ -271,6 +281,7 @@ mod tests {
             sub: user_id.to_string(),
             typ: "access".into(),
             iss: ISSUER.into(),
+            aud: AUDIENCE.into(),
             iat: Utc::now().timestamp(),
             exp: (Utc::now() + Duration::hours(1)).timestamp(),
         };
@@ -284,6 +295,7 @@ mod tests {
             sub: Uuid::new_v4().to_string(),
             typ: "access".into(),
             iss: ISSUER.into(),
+            aud: AUDIENCE.into(),
             iat: 1000,
             exp: 2000,
         };

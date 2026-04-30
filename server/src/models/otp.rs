@@ -74,7 +74,7 @@ pub struct VerifyResetOtpResponse {
 #[derive(Debug, Deserialize, Validate)]
 pub struct SetNewPasswordRequest {
     pub reset_token: String,
-    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
     pub new_password: String,
 }
 

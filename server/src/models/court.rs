@@ -70,7 +70,8 @@ pub struct Pagination {
 
 impl Pagination {
     pub fn offset(&self) -> i64 {
-        (self.page().saturating_sub(1)) * self.effective_limit()
+        (self.page().saturating_sub(1))
+            .saturating_mul(self.effective_limit())
     }
 
     pub fn page(&self) -> i64 {

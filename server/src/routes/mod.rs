@@ -25,7 +25,7 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/health", get(health::health_check))
-        .nest("/auth", auth::router())
+        .nest("/auth", auth::public_router())
         .nest("/courts", courts::router())
         .nest("/webhooks", webhooks::router());
 
@@ -45,10 +45,19 @@ pub fn build_router(state: AppState) -> Router {
             crate::middleware::auth::require_auth,
         ));
 
+    // Protected auth routes (/auth/me) behind require_auth middleware
+    let protected_auth_routes = Router::new()
+        .nest("/auth", auth::protected_router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::require_auth,
+        ));
+
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .merge(payment_routes)
+        .merge(protected_auth_routes)
         .route("/ws/games/{game_id}", get(crate::ws::lobby::ws_game_lobby))
         .with_state(state.clone())
         .layer(crate::middleware::cors::cors_layer(&state.settings))

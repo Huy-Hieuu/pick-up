@@ -101,6 +101,16 @@ impl CourtService {
             return Err(AppError::BadRequest("Cannot book past time slots".into()));
         }
 
+        // Check for overlapping bookings by the same user.
+        let overlap = db::courts::has_overlapping_booking_tx(
+            &mut tx, user_id, slot.id, slot.start_time, slot.end_time,
+        ).await?;
+        if overlap {
+            return Err(AppError::Conflict(
+                "You already have a booking that overlaps with this time slot".into(),
+            ));
+        }
+
         let updated =
             db::courts::update_slot_status(&mut tx, slot_id, SlotStatus::Booked, Some(user_id))
                 .await?;

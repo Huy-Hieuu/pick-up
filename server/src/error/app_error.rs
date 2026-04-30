@@ -35,6 +35,9 @@ pub enum AppError {
     #[error("Not implemented: {0}")]
     Unimplemented(String),
 
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 
@@ -70,6 +73,9 @@ impl IntoResponse for AppError {
             }
             AppError::Unimplemented(msg) => {
                 (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED", msg.clone())
+            }
+            AppError::TooManyRequests(msg) => {
+                (StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", msg.clone())
             }
             AppError::Internal(err) => {
                 tracing::error!("Internal error: {err:#}");

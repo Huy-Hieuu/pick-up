@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::extractors::auth::Claims;
+use crate::extractors::auth::{Claims, AUDIENCE};
 use crate::state::AppState;
 
 /// Maximum allowed WebSocket message size (64 KB).
@@ -49,11 +49,45 @@ pub async fn ws_game_lobby(
     Query(auth): Query<WsAuth>,
 ) -> Response {
     // Validate JWT before accepting the upgrade.
-    if verify_ws_token(&auth.token, &state.settings.jwt.secret).is_none() {
+    let claims = match verify_ws_token(&auth.token, &state.settings.jwt.secret) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({
+                    "error": { "code": "UNAUTHORIZED", "message": "Invalid or missing token" }
+                })),
+            ).into_response();
+        }
+    };
+
+    // Verify user is a member of the game.
+    let user_id = match uuid::Uuid::parse_str(&claims.sub) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({
+                    "error": { "code": "UNAUTHORIZED", "message": "Invalid token" }
+                })),
+            ).into_response();
+        }
+    };
+
+    let is_member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM game_players WHERE game_id = $1 AND user_id = $2)"
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(false);
+
+    if !is_member {
         return (
-            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({
-                "error": { "code": "UNAUTHORIZED", "message": "Invalid or missing token" }
+                "error": { "code": "FORBIDDEN", "message": "You are not a member of this game" }
             })),
         ).into_response();
     }
@@ -69,6 +103,7 @@ fn verify_ws_token(token: &str, secret: &str) -> Option<Claims> {
 
     let mut validation = Validation::default();
     validation.set_issuer(&["pickup-server"]);
+    validation.set_audience(&[AUDIENCE]);
 
     decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
         .ok()

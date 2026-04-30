@@ -22,7 +22,7 @@ impl std::fmt::Debug for AppState {
         f.debug_struct("AppState")
             .field("pool", &"PgPool")
             .field("redis", &"ConnectionManager")
-            .field("settings", &self.settings)
+            .field("settings", &"<redacted>")
             .field("s3_client", &"S3Client")
             .finish()
     }

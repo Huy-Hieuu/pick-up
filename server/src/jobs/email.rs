@@ -5,10 +5,11 @@
 //! - `email:dead`  → poison messages that failed deserialization
 //!
 //! Worker runs as a background tokio task, processing one email at a time.
-//! If SMTP is temporarily down, the message stays in the queue and will be retried.
+//! Supports exponential backoff on errors and graceful shutdown via CancellationToken.
 
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::config::EmailSettings;
 
@@ -49,56 +50,160 @@ pub async fn enqueue_email(
 }
 
 /// Background worker that processes email jobs from the Redis queue.
-/// Runs until the tokio runtime shuts down.
+/// Supports exponential backoff and graceful shutdown via CancellationToken.
 pub async fn run_email_worker(
     redis: ConnectionManager,
     email_settings: EmailSettings,
+    cancel: CancellationToken,
 ) {
+    let mut backoff_secs: u64 = 0;
+    let max_backoff_secs: u64 = 60;
+
+    // Build the SMTP transport once and reuse it (M11).
+    let mailer = build_smtp_transport(&email_settings);
+
     loop {
-        let result = process_one_email(&redis, &email_settings).await;
-        if let Err(e) = result {
-            tracing::error!(error = %e, "Email worker encountered an error, retrying in 5s");
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        // Check for shutdown signal.
+        if cancel.is_cancelled() {
+            tracing::info!("Email worker received shutdown signal, draining remaining emails...");
+            // Drain the queue before exiting.
+            while let Ok(Some(payload)) = dequeue_email(&redis, 0).await {
+                let _ = process_one_email_with_transport(&redis, &mailer, &email_settings, &payload).await;
+            }
+            tracing::info!("Email worker drained queue, exiting.");
+            return;
+        }
+
+        let result = dequeue_and_process(&redis, &mailer, &email_settings, &cancel).await;
+        match result {
+            Ok(()) => {
+                // Reset backoff on success.
+                backoff_secs = 0;
+            }
+            Err(e) => {
+                // Exponential backoff on error (M9).
+                backoff_secs = if backoff_secs == 0 { 5 } else { (backoff_secs * 2).min(max_backoff_secs) };
+                tracing::error!(error = %e, backoff_secs, "Email worker error, backing off");
+
+                // Wait with shutdown awareness.
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {},
+                    _ = cancel.cancelled() => {
+                        tracing::info!("Email worker shutdown during backoff, exiting.");
+                        return;
+                    }
+                }
+            }
         }
     }
 }
 
-async fn process_one_email(
-    redis: &ConnectionManager,
-    email_settings: &EmailSettings,
-) -> anyhow::Result<()> {
-    use lettre::message::Mailbox;
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::transport::smtp::AsyncSmtpTransport;
-    use lettre::transport::smtp::authentication::Mechanism;
-    use lettre::transport::AsyncTransport;
-    use lettre::Tokio1Executor;
+/// Build SMTP transport. Reused across emails for efficiency.
+fn build_smtp_transport(email_settings: &EmailSettings) -> lettre::AsyncSmtpTransport<lettre::Tokio1Executor> {
+    use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 
-    // BRPOP blocks until an item appears in the queue.
+    let credentials = Credentials::new(
+        email_settings.smtp_username.clone(),
+        email_settings.smtp_password.clone(),
+    );
+
+    lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&email_settings.smtp_host)
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to build SMTP relay: {e}");
+            // Return a dummy transport that will fail on send — avoids panicking.
+            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay("localhost")
+                .unwrap()
+        })
+        .port(email_settings.smtp_port)
+        .credentials(credentials)
+        .authentication(vec![Mechanism::Login])
+        .build()
+}
+
+/// Dequeue an email from Redis with optional timeout.
+/// timeout=0 means non-blocking (for drain), timeout>0 means blocking wait.
+async fn dequeue_email(
+    redis: &ConnectionManager,
+    timeout_secs: i32,
+) -> anyhow::Result<Option<String>> {
+    let mut conn = redis.clone();
+    let result: Vec<String> = redis::cmd("BRPOP")
+        .arg("email:queue")
+        .arg(timeout_secs)
+        .query_async(&mut conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("BRPOP failed: {e}"))?;
+
+    if result.is_empty() {
+        return Ok(None);
+    }
+    // BRPOP returns [list_name, payload] — take the last element (L4: safe unwrap replacement).
+    Ok(result.into_iter().last())
+}
+
+/// Dequeue and process a single email, with cancellation support.
+async fn dequeue_and_process(
+    redis: &ConnectionManager,
+    mailer: &lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    email_settings: &EmailSettings,
+    cancel: &CancellationToken,
+) -> anyhow::Result<()> {
+    // BRPOP with 1s timeout for responsive shutdown.
     let payload = {
         let mut conn = redis.clone();
-        let result: Result<Vec<String>, _> = redis::cmd("BRPOP")
+        let result: Vec<String> = redis::cmd("BRPOP")
             .arg("email:queue")
             .arg(1_i32)
             .query_async(&mut conn)
-            .await;
+            .await
+            .map_err(|e| anyhow::anyhow!("BRPOP failed: {e}"))?;
 
-        match result {
-            Ok(arr) if arr.is_empty() => return Ok(()), // timeout, queue empty
-            Ok(arr) => arr.into_iter().last().unwrap(),
-            Err(e) => return Err(anyhow::anyhow!("BRPOP failed: {e}")),
+        if result.is_empty() {
+            return Ok(()); // timeout, queue empty
         }
+        // Safe: BRPOP returns [key, value] when non-empty.
+        result.into_iter().last().unwrap_or_default()
     };
 
-    let job: EmailJob = match serde_json::from_str(&payload) {
+    if payload.is_empty() {
+        return Ok(());
+    }
+
+    // Check cancellation after dequeue.
+    if cancel.is_cancelled() {
+        // Re-queue the email since we haven't processed it.
+        let mut conn = redis.clone();
+        let _: () = redis::cmd("LPUSH")
+            .arg("email:queue")
+            .arg(&payload)
+            .query_async(&mut conn)
+            .await
+            .map_err(|re| anyhow::anyhow!("Failed to re-queue email during shutdown: {re}"))?;
+        return Ok(());
+    }
+
+    process_one_email_with_transport(redis, mailer, email_settings, &payload).await
+}
+
+/// Process a single email payload using the shared transport.
+async fn process_one_email_with_transport(
+    redis: &ConnectionManager,
+    mailer: &lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    email_settings: &EmailSettings,
+    payload: &str,
+) -> anyhow::Result<()> {
+    use lettre::message::Mailbox;
+    use lettre::transport::AsyncTransport;
+
+    let job: EmailJob = match serde_json::from_str(payload) {
         Ok(job) => job,
         Err(e) => {
-            // Poison message — move to dead-letter queue for inspection.
+            // Poison message — move to dead-letter queue.
             tracing::error!(error = %e, "Failed to deserialize email job, moving to dead-letter queue");
             let mut conn = redis.clone();
             let _: () = redis::cmd("LPUSH")
                 .arg("email:dead")
-                .arg(&payload)
+                .arg(payload)
                 .query_async(&mut conn)
                 .await
                 .map_err(|re| anyhow::anyhow!("Failed to push to dead-letter queue: {re}"))?;
@@ -125,37 +230,27 @@ async fn process_one_email(
         .body(job.body.clone())
         .map_err(|e| anyhow::anyhow!("Failed to build email: {e}"))?;
 
-    let credentials = Credentials::new(
-        email_settings.smtp_username.clone(),
-        email_settings.smtp_password.clone(),
-    );
-
-    // port 587 + STARTTLS with explicit LOGIN auth mechanism
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&email_settings.smtp_host)
-        .map_err(|e| anyhow::anyhow!("Failed to build SMTP relay: {e}"))?
-        .port(email_settings.smtp_port)
-        .credentials(credentials)
-        .authentication(vec![Mechanism::Login])
-        .build();
-
     if let Err(e) = mailer.send(email).await {
         tracing::error!(%e, to = %job.to, retry = job.retry_count, "SMTP send failed");
 
         if job.retry_count >= MAX_RETRIES {
-            // Max retries reached — move to dead-letter queue.
+            // Max retries — move to dead-letter queue with updated retry count (M10).
+            let mut retry_job = job.clone();
+            retry_job.retry_count = MAX_RETRIES;
+            let dead_payload = serde_json::to_string(&retry_job)
+                .map_err(|e| anyhow::anyhow!("JSON serialize error: {e}"))?;
             let mut conn = redis.clone();
             let _: () = redis::cmd("LPUSH")
                 .arg("email:dead")
-                .arg(&payload)
+                .arg(&dead_payload)
                 .query_async(&mut conn)
                 .await
                 .map_err(|re| anyhow::anyhow!("Failed to push to dead-letter queue: {re}"))?;
-            return Err(anyhow::anyhow!(
-                "SMTP send failed after {MAX_RETRIES} retries for {}: {e}", job.to
-            ));
+            // Return Ok — the email was handled (moved to dead-letter) (M10).
+            return Ok(());
         }
 
-        // Re-queue with incremented retry count (RPUSH → back of queue).
+        // Re-queue with incremented retry count.
         let mut retry_job = job.clone();
         retry_job.retry_count += 1;
         let retry_payload = serde_json::to_string(&retry_job)
@@ -178,8 +273,6 @@ async fn process_one_email(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── EmailJob serialization roundtrip ───────────────────────────
 
     #[test]
     fn serialize_deserialize_roundtrip() {
@@ -207,7 +300,6 @@ mod tests {
         };
         let json = serde_json::to_string(&job).unwrap();
 
-        // Verify JSON structure
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["to"], "test@pickup.app");
         assert_eq!(v["subject"], "Your code is 123456");
@@ -254,8 +346,6 @@ mod tests {
         assert_eq!(parsed.subject, job.subject);
     }
 
-    // ── OTP email body format ──────────────────────────────────────
-
     #[test]
     fn otp_email_body_contains_code() {
         let code = "123456";
@@ -265,14 +355,5 @@ mod tests {
         );
         assert!(body.contains(code));
         assert!(body.contains("expires in 5 minutes"));
-    }
-
-    // ── Dead-letter queue key ──────────────────────────────────────
-
-    #[test]
-    fn dead_letter_queue_name() {
-        // Verify the queue key matches what the worker uses
-        let queue = "email:dead";
-        assert_eq!(queue, "email:dead");
     }
 }

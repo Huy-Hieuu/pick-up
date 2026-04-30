@@ -123,7 +123,7 @@ async fn get_share_link(
     Ok(Json(serde_json::json!({
         "url": format!("https://pickup.app/game/{game_id}"),
         "message": format!(
-            "Join my {} game at {} on {} at {}! {}/{} spots left.",
+            "Join my {} game at {} on {} at {}! {}/{} spots filled.",
             sport_name,
             game.court.name,
             game.slot.start_time.format("%b %-d"),

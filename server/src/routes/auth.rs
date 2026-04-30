@@ -29,7 +29,8 @@ use crate::models::otp::{
 use crate::models::user::UpdateProfileRequest;
 use crate::state::AppState;
 
-pub fn router() -> Router<AppState> {
+/// Public auth routes — no auth middleware required.
+pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/otp", post(send_otp))
         .route("/verify", post(verify_otp))
@@ -39,6 +40,11 @@ pub fn router() -> Router<AppState> {
         .route("/forgot-password", post(forgot_password))
         .route("/verify-reset-otp", post(verify_reset_otp))
         .route("/set-new-password", post(set_new_password))
+}
+
+/// Protected auth routes — require_auth middleware applied.
+pub fn protected_router() -> Router<AppState> {
+    Router::new()
         .route("/me", get(get_me).patch(update_me))
 }
 
@@ -82,6 +88,7 @@ async fn refresh_token(
 ) -> AppResult<Json<AuthResponse>> {
     let resp = crate::services::AuthService::refresh_token(
         &state.pool,
+        &state.redis,
         &req.refresh_token,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
@@ -114,6 +121,7 @@ async fn login(
 ) -> AppResult<Json<AuthResponse>> {
     let resp = crate::services::AuthService::login(
         &state.pool,
+        &state.redis,
         req,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
@@ -182,7 +190,7 @@ async fn get_me(
 async fn update_me(
     State(state): State<AppState>,
     auth: AuthUser,
-    Json(req): Json<UpdateProfileRequest>,
+    ValidatedJson(req): ValidatedJson<UpdateProfileRequest>,
 ) -> AppResult<Json<UserProfile>> {
     let profile = crate::services::AuthService::update_profile(&state.pool, auth.user_id(), req).await?;
     Ok(Json(profile))

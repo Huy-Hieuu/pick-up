@@ -41,7 +41,7 @@ pub async fn list_games_all_joined(
         JOIN court_slots cs ON cs.id = g.court_slot_id
         JOIN courts c ON c.id = cs.court_id
         JOIN users u ON u.id = g.creator_id
-        LEFT JOIN (SELECT game_id, COUNT(*)::int8 AS cnt FROM game_players GROUP BY game_id) pc ON pc.game_id = g.id
+        LEFT JOIN LATERAL (SELECT COUNT(*)::int8 AS cnt FROM game_players WHERE game_id = g.id) pc ON true
         WHERE (
             ($1::game_status IS NULL AND g.status IN ('open', 'full'))
             OR ($1::game_status IS NOT NULL AND g.status = $1)
@@ -81,18 +81,14 @@ pub async fn list_games_near_joined(
                 g.id, g.sport_type, g.max_players, g.status,
                 COALESCE(pc.cnt, 0) AS current_players,
                 c.id AS court_id, c.name AS court_name, c.address AS court_address,
-                (6371 * acos(LEAST(1.0,
-                    cos(radians($1)) * cos(radians(c.lat)) *
-                    cos(radians(c.lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(c.lat))
-                ))) AS distance_km,
+                haversine_km(c.lat, c.lng, $1, $2) AS distance_km,
                 cs.start_time AS slot_start_time, cs.end_time AS slot_end_time,
                 u.display_name AS creator_display_name, u.avatar_url AS creator_avatar_url
             FROM games g
             JOIN court_slots cs ON cs.id = g.court_slot_id
             JOIN courts c ON c.id = cs.court_id
             JOIN users u ON u.id = g.creator_id
-            LEFT JOIN (SELECT game_id, COUNT(*)::int8 AS cnt FROM game_players GROUP BY game_id) pc ON pc.game_id = g.id
+            LEFT JOIN LATERAL (SELECT COUNT(*)::int8 AS cnt FROM game_players WHERE game_id = g.id) pc ON true
             WHERE (
                 ($3::game_status IS NULL AND g.status IN ('open', 'full'))
                 OR ($3::game_status IS NOT NULL AND g.status = $3)
@@ -158,11 +154,7 @@ pub async fn count_games_near_filtered(
         r#"
         SELECT COUNT(*) FROM (
             SELECT g.id,
-                (6371 * acos(LEAST(1.0,
-                    cos(radians($1)) * cos(radians(c.lat)) *
-                    cos(radians(c.lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(c.lat))
-                ))) AS distance_km
+                haversine_km(c.lat, c.lng, $1, $2) AS distance_km
             FROM games g
             JOIN court_slots cs ON cs.id = g.court_slot_id
             JOIN courts c ON c.id = cs.court_id
@@ -415,6 +407,36 @@ pub async fn set_game_status(
     )
     .bind(game_id)
     .bind(status)
+    .fetch_one(&mut *conn)
+    .await
+}
+
+/// Remove all players from a game. Used when cancelling a game.
+pub async fn remove_all_game_players(
+    conn: &mut sqlx::PgConnection,
+    game_id: Uuid,
+) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM game_players WHERE game_id = $1")
+        .bind(game_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Get slot info for a game within a transaction.
+pub async fn find_game_slot_tx(
+    conn: &mut sqlx::PgConnection,
+    game_id: Uuid,
+) -> sqlx::Result<GameSlotBrief> {
+    sqlx::query_as::<_, GameSlotBrief>(
+        r#"
+        SELECT cs.start_time, cs.end_time
+        FROM court_slots cs
+        JOIN games g ON g.court_slot_id = cs.id
+        WHERE g.id = $1
+        "#,
+    )
+    .bind(game_id)
     .fetch_one(&mut *conn)
     .await
 }

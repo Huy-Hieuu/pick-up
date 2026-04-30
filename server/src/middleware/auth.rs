@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
 };
 
-use crate::extractors::auth::Claims;
+use crate::extractors::auth::{Claims, AUDIENCE};
 use crate::state::AppState;
 
 /// Auth middleware that verifies JWT on protected routes.
@@ -47,6 +47,7 @@ fn verify_token(token: &str, secret: &str) -> Result<Claims, Response> {
 
     let mut validation = Validation::default();
     validation.set_issuer(&["pickup-server"]);
+    validation.set_audience(&[AUDIENCE]);
 
     let token_data = decode::<Claims>(
         token,

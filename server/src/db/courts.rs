@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -21,11 +21,7 @@ pub async fn list_courts_near(
             SELECT
                 id, name, sport_type, lat, lng, address,
                 price_per_slot, photo_urls, owner_id, created_at,
-                (6371 * acos(LEAST(1.0,
-                    cos(radians($1)) * cos(radians(lat)) *
-                    cos(radians(lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(lat))
-                ))) AS distance_km
+                haversine_km(lat, lng, $1, $2) AS distance_km
             FROM courts
             WHERE ($3::sport_type IS NULL OR sport_type = $3)
         ) sub
@@ -54,12 +50,7 @@ pub async fn count_courts_near(
     sqlx::query_scalar::<_, i64>(
         r#"
         SELECT COUNT(*) FROM (
-            SELECT
-                (6371 * acos(LEAST(1.0,
-                    cos(radians($1)) * cos(radians(lat)) *
-                    cos(radians(lng) - radians($2)) +
-                    sin(radians($1)) * sin(radians(lat))
-                ))) AS distance_km
+            SELECT haversine_km(lat, lng, $1, $2) AS distance_km
             FROM courts
             WHERE ($3::sport_type IS NULL OR sport_type = $3)
         ) sub
@@ -201,6 +192,34 @@ pub async fn update_slot_status(
     .bind(slot_id)
     .bind(status)
     .bind(booked_by)
+    .fetch_one(&mut *conn)
+    .await
+}
+
+/// Check if user has an overlapping booking.
+pub async fn has_overlapping_booking_tx(
+    conn: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    exclude_slot_id: Uuid,
+    start_time: DateTime<Utc>,
+    end_time: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM court_slots
+            WHERE booked_by = $1
+              AND id != $2
+              AND status = 'booked'
+              AND start_time < $4
+              AND end_time > $3
+        )
+        "#,
+    )
+    .bind(user_id)
+    .bind(exclude_slot_id)
+    .bind(start_time)
+    .bind(end_time)
     .fetch_one(&mut *conn)
     .await
 }

@@ -28,6 +28,7 @@ pub struct AppSettings {
 pub struct DatabaseSettings {
     pub url: String,
     pub max_connections: u32,
+    pub run_migrations: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,9 @@ impl Settings {
                     anyhow::ensure!(n > 0, "DB_MAX_CONNECTIONS must be positive");
                     n
                 },
+                run_migrations: env::var("DB_RUN_MIGRATIONS")
+                    .unwrap_or_else(|_| "true".into())
+                    .parse()?,
             },
             redis: RedisSettings {
                 url: env::var("REDIS_URL")
@@ -131,7 +135,7 @@ impl Settings {
                 },
                 otp_max_attempts: {
                     let attempts: i16 = env::var("OTP_MAX_ATTEMPTS")
-                        .unwrap_or_else(|_| "5".into())
+                        .unwrap_or_else(|_| "3".into())
                         .parse()?;
                     anyhow::ensure!(attempts > 0, "OTP_MAX_ATTEMPTS must be positive");
                     attempts
