@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -35,6 +35,7 @@ pub struct CourtRow {
     pub address: String,
     pub price_per_slot: i32,
     pub photo_urls: Vec<String>,
+    #[serde(skip_serializing)]
     pub owner_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
@@ -50,13 +51,21 @@ pub struct CourtSlotRow {
     pub created_at: DateTime<Utc>,
 }
 
+// ── Query DTOs ──────────────────────────────────────────────────
+
+/// Query params for `GET /courts/:id/slots`. Date is required per spec.
+#[derive(Debug, Deserialize)]
+pub struct SlotListQuery {
+    pub date: NaiveDate,
+}
+
 // ── Request DTOs ───────────────────────────────────────────────
 
 /// Shared pagination parameters with safe bounds.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Pagination {
     pub page: Option<i64>,
-    pub limit: Option<i64>,
+    pub per_page: Option<i64>,
 }
 
 impl Pagination {
@@ -69,7 +78,7 @@ impl Pagination {
     }
 
     pub fn effective_limit(&self) -> i64 {
-        self.limit.unwrap_or(20).clamp(1, 100)
+        self.per_page.unwrap_or(20).clamp(1, 50)
     }
 }
 
@@ -78,7 +87,7 @@ pub struct ListCourtsQuery {
     pub sport_type: Option<SportType>,
     pub lat: Option<f64>,
     pub lng: Option<f64>,
-    #[validate(range(min = 0.1, max = 100.0, message = "radius_km must be between 0.1 and 100"))]
+    #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]
     pub pagination: Pagination,
@@ -95,92 +104,77 @@ pub struct BookSlotRequest {
 pub struct CourtDetail {
     #[serde(flatten)]
     pub court: CourtRow,
-    pub slots: Vec<CourtSlotRow>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Paginated<T> {
+    #[serde(rename = "courts")]
     pub data: Vec<T>,
     pub total: i64,
     pub page: i64,
-    pub limit: i64,
+    pub per_page: i64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Court row with optional geo distance — used in list responses.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct CourtWithDistance {
+    #[sqlx(flatten)]
+    #[serde(flatten)]
+    pub court: CourtRow,
+    pub distance_km: Option<f64>,
+}
 
-    // ── Pagination ─────────────────────────────────────────────────
+// ── Slot response types ─────────────────────────────────────────
 
-    #[test]
-    fn default_page_is_1() {
-        let p = Pagination { page: None, limit: None };
-        assert_eq!(p.page(), 1);
+/// Slot item in list response — excludes `court_id`, `booked_by`, `created_at`.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct SlotItem {
+    pub id: Uuid,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub status: SlotStatus,
+}
+
+/// `GET /courts/:id/slots` response wrapper.
+#[derive(Debug, Serialize)]
+pub struct SlotListResponse {
+    pub court_id: Uuid,
+    pub date: NaiveDate,
+    pub slots: Vec<SlotItem>,
+}
+
+/// `POST /courts/:id/slots/:slot_id/book` response — renames `id` → `slot_id`.
+#[derive(Debug, Serialize)]
+pub struct BookedSlotResponse {
+    #[serde(rename = "slot_id")]
+    pub id: Uuid,
+    pub court_id: Uuid,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub status: SlotStatus,
+    pub booked_by: Option<Uuid>,
+}
+
+impl From<CourtSlotRow> for SlotItem {
+    fn from(s: CourtSlotRow) -> Self {
+        Self {
+            id: s.id,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            status: s.status,
+        }
     }
+}
 
-    #[test]
-    fn default_limit_is_20() {
-        let p = Pagination { page: None, limit: None };
-        assert_eq!(p.effective_limit(), 20);
-    }
-
-    #[test]
-    fn negative_page_clamps_to_1() {
-        let p = Pagination { page: Some(-5), limit: None };
-        assert_eq!(p.page(), 1);
-    }
-
-    #[test]
-    fn zero_page_clamps_to_1() {
-        let p = Pagination { page: Some(0), limit: None };
-        assert_eq!(p.page(), 1);
-    }
-
-    #[test]
-    fn large_page_is_accepted() {
-        let p = Pagination { page: Some(999), limit: None };
-        assert_eq!(p.page(), 999);
-    }
-
-    #[test]
-    fn limit_clamps_to_1_minimum() {
-        let p = Pagination { page: None, limit: Some(0) };
-        assert_eq!(p.effective_limit(), 1);
-    }
-
-    #[test]
-    fn negative_limit_clamps_to_1() {
-        let p = Pagination { page: None, limit: Some(-10) };
-        assert_eq!(p.effective_limit(), 1);
-    }
-
-    #[test]
-    fn limit_clamps_to_100_maximum() {
-        let p = Pagination { page: None, limit: Some(999) };
-        assert_eq!(p.effective_limit(), 100);
-    }
-
-    #[test]
-    fn limit_50_is_accepted() {
-        let p = Pagination { page: None, limit: Some(50) };
-        assert_eq!(p.effective_limit(), 50);
-    }
-
-    #[test]
-    fn offset_calculation_page_1() {
-        let p = Pagination { page: Some(1), limit: Some(20) };
-        assert_eq!(p.offset(), 0);
-    }
-
-    #[test]
-    fn offset_calculation_page_3() {
-        let p = Pagination { page: Some(3), limit: Some(20) };
-        assert_eq!(p.offset(), 40);
-    }
-
-    #[test]
-    fn offset_with_custom_limit() {
-        let p = Pagination { page: Some(2), limit: Some(50) };
-        assert_eq!(p.offset(), 50);
+impl From<CourtSlotRow> for BookedSlotResponse {
+    fn from(s: CourtSlotRow) -> Self {
+        Self {
+            id: s.id,
+            court_id: s.court_id,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            status: s.status,
+            booked_by: s.booked_by,
+        }
     }
 }

@@ -1,14 +1,17 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     routing::{get, patch, post},
     Json, Router,
 };
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use crate::extractors::{AuthUser, ValidatedJson};
-use crate::models::game::{CreateGameRequest, GameDetail, GameRow, ListGamesQuery, UpdateStatusRequest};
-use crate::services::{GameService, BillSplitService};
+use crate::extractors::{AuthUser, ValidatedJson, ValidatedQuery};
+use crate::models::court::SportType;
+use crate::models::game::{
+    CreateGameRequest, GameDetail, GameListResponse, GameRow, ListGamesQuery, UpdateStatusRequest,
+};
+use crate::services::{BillSplitService, GameService};
 use crate::models::game::BillSplit;
 use crate::state::AppState;
 
@@ -27,8 +30,8 @@ pub fn router() -> Router<AppState> {
 /// `GET /games` — list open games.
 async fn list_games(
     State(state): State<AppState>,
-    Query(query): Query<ListGamesQuery>,
-) -> AppResult<Json<Vec<GameRow>>> {
+    ValidatedQuery(query): ValidatedQuery<ListGamesQuery>,
+) -> AppResult<Json<GameListResponse>> {
     let games = GameService::list_games(&state.pool, query).await?;
     Ok(Json(games))
 }
@@ -110,11 +113,57 @@ async fn get_share_link(
     _auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Verify the game exists before generating a share link.
-    let _game = GameService::get_game(&state.pool, game_id).await?;
-    // TODO: Generate Zalo deeplink for game sharing
+    let game = GameService::get_game(&state.pool, game_id).await?;
+    let sport_name = sport_display_name(game.game.sport_type);
+    let time_str = format!(
+        "{} {}",
+        game.slot.start_time.format("%l").to_string().trim(),
+        game.slot.start_time.format("%p")
+    );
     Ok(Json(serde_json::json!({
-        "deeplink": format!("pickup://games/{game_id}"),
-        "game_id": game_id,
+        "url": format!("https://pickup.app/game/{game_id}"),
+        "message": format!(
+            "Join my {} game at {} on {} at {}! {}/{} spots left.",
+            sport_name,
+            game.court.name,
+            game.slot.start_time.format("%b %-d"),
+            time_str,
+            game.players.len(),
+            game.game.max_players,
+        ),
     })))
+}
+
+fn sport_display_name(sport: SportType) -> &'static str {
+    match sport {
+        SportType::Pickleball => "pickleball",
+        SportType::MiniFootball => "mini football",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── sport_display_name ─────────────────────────────────────────
+
+    #[test]
+    fn sport_display_name_pickleball() {
+        assert_eq!(sport_display_name(SportType::Pickleball), "pickleball");
+    }
+
+    #[test]
+    fn sport_display_name_mini_football() {
+        assert_eq!(sport_display_name(SportType::MiniFootball), "mini football");
+    }
+
+    #[test]
+    fn sport_display_name_is_lowercase_no_underscores() {
+        // Verify the output has no PascalCase and no underscores (unlike Debug format)
+        for sport in [SportType::Pickleball, SportType::MiniFootball] {
+            let name = sport_display_name(sport);
+            assert_eq!(name, name.to_lowercase());
+            assert!(!name.contains('_'), "Should use spaces not underscores");
+        }
+    }
 }

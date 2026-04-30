@@ -1,3 +1,5 @@
+pub mod courts;
+pub mod games;
 pub mod pool;
 pub mod redis_pool;
 pub mod users;

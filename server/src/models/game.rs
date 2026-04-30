@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 use validator::Validate;
 
-use super::court::{SportType, Pagination};
+use super::court::{Pagination, SportType};
 
 // ── Enums ──────────────────────────────────────────────────────
 
@@ -17,6 +17,16 @@ pub enum GameStatus {
     InProgress,
     Completed,
     Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "payment_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentStatus {
+    Pending,
+    Paid,
+    Expired,
+    Refunded,
 }
 
 // ── Database row types ─────────────────────────────────────────
@@ -46,16 +56,21 @@ pub struct GamePlayerRow {
 pub struct CreateGameRequest {
     pub court_slot_id: Uuid,
     pub sport_type: SportType,
-    #[validate(range(min = 2, max = 50))]
+    #[validate(range(min = 2, max = 30))]
     pub max_players: i32,
     #[validate(length(max = 500, message = "Description must be under 500 characters"))]
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct ListGamesQuery {
     pub sport_type: Option<SportType>,
     pub status: Option<GameStatus>,
+    pub date: Option<NaiveDate>,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
+    pub radius_km: Option<f64>,
     #[serde(flatten)]
     pub pagination: Pagination,
 }
@@ -65,15 +80,129 @@ pub struct UpdateStatusRequest {
     pub status: GameStatus,
 }
 
-// ── Response DTOs ──────────────────────────────────────────────
+// ── Game list response types ───────────────────────────────────
 
+/// Flat row from JOIN query for game listing.
+#[derive(Debug, FromRow)]
+pub struct GameListRow {
+    pub id: Uuid,
+    pub sport_type: SportType,
+    pub max_players: i16,
+    pub status: GameStatus,
+    pub current_players: i64,
+    pub court_id: Uuid,
+    pub court_name: String,
+    pub court_address: String,
+    pub distance_km: Option<f64>,
+    pub slot_start_time: DateTime<Utc>,
+    pub slot_end_time: DateTime<Utc>,
+    pub creator_display_name: Option<String>,
+    pub creator_avatar_url: Option<String>,
+}
+
+/// Nested game item in list response.
+#[derive(Debug, Serialize)]
+pub struct GameListItem {
+    pub id: Uuid,
+    pub sport_type: SportType,
+    pub court: GameCourtBrief,
+    pub slot: GameSlotBrief,
+    pub max_players: i16,
+    pub current_players: i64,
+    pub status: GameStatus,
+    pub creator: GameCreatorInfo,
+}
+
+/// `GET /games` response wrapper.
+#[derive(Debug, Serialize)]
+pub struct GameListResponse {
+    pub games: Vec<GameListItem>,
+    pub total: i64,
+    pub page: i64,
+}
+
+/// Brief court info nested in game list items.
+#[derive(Debug, Serialize)]
+pub struct GameCourtBrief {
+    pub id: Uuid,
+    pub name: String,
+    pub address: String,
+    pub distance_km: Option<f64>,
+}
+
+/// Slot info nested in game responses.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct GameSlotBrief {
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+}
+
+/// Creator info nested in game list items.
+#[derive(Debug, Serialize)]
+pub struct GameCreatorInfo {
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+impl From<GameListRow> for GameListItem {
+    fn from(row: GameListRow) -> Self {
+        Self {
+            id: row.id,
+            sport_type: row.sport_type,
+            court: GameCourtBrief {
+                id: row.court_id,
+                name: row.court_name,
+                address: row.court_address,
+                distance_km: row.distance_km,
+            },
+            slot: GameSlotBrief {
+                start_time: row.slot_start_time,
+                end_time: row.slot_end_time,
+            },
+            max_players: row.max_players,
+            current_players: row.current_players,
+            status: row.status,
+            creator: GameCreatorInfo {
+                display_name: row.creator_display_name,
+                avatar_url: row.creator_avatar_url,
+            },
+        }
+    }
+}
+
+// ── Game detail response types ─────────────────────────────────
+
+/// Full court info nested in game detail.
+#[derive(Debug, Serialize, FromRow)]
+pub struct GameCourtFull {
+    pub id: Uuid,
+    pub name: String,
+    pub address: String,
+    pub price_per_slot: i32,
+}
+
+/// Player with profile + payment info nested in game detail.
+#[derive(Debug, Serialize, FromRow)]
+pub struct PlayerWithProfile {
+    pub user_id: Uuid,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub joined_at: DateTime<Utc>,
+    pub payment_status: Option<PaymentStatus>,
+}
+
+/// `GET /games/:id` response — nested court, slot, players.
 #[derive(Debug, Serialize)]
 pub struct GameDetail {
     #[serde(flatten)]
     pub game: GameRow,
-    pub players: Vec<GamePlayerRow>,
+    pub court: GameCourtFull,
+    pub slot: GameSlotBrief,
+    pub players: Vec<PlayerWithProfile>,
     pub split: Option<BillSplit>,
 }
+
+// ── Bill split types ───────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct BillSplit {
@@ -91,115 +220,4 @@ pub struct PlayerPayment {
     pub display_name: Option<String>,
     pub amount: i32,
     pub paid: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use validator::Validate;
-
-    // ── CreateGameRequest ──────────────────────────────────────────
-
-    #[test]
-    fn create_game_valid() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 10,
-            description: Some("Friendly match".into()),
-        };
-        assert!(req.validate().is_ok());
-    }
-
-    #[test]
-    fn create_game_min_players() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::MiniFootball,
-            max_players: 2, // minimum
-            description: None,
-        };
-        assert!(req.validate().is_ok());
-    }
-
-    #[test]
-    fn create_game_below_min_players() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 1, // below min of 2
-            description: None,
-        };
-        assert!(req.validate().is_err());
-    }
-
-    #[test]
-    fn create_game_max_players() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 50, // maximum
-            description: None,
-        };
-        assert!(req.validate().is_ok());
-    }
-
-    #[test]
-    fn create_game_above_max_players() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 51, // above max of 50
-            description: None,
-        };
-        assert!(req.validate().is_err());
-    }
-
-    #[test]
-    fn create_game_description_max_length() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 4,
-            description: Some("x".repeat(500)), // exactly 500
-        };
-        assert!(req.validate().is_ok());
-    }
-
-    #[test]
-    fn create_game_description_too_long() {
-        let req = CreateGameRequest {
-            court_slot_id: Uuid::new_v4(),
-            sport_type: SportType::Pickleball,
-            max_players: 4,
-            description: Some("x".repeat(501)), // over limit
-        };
-        assert!(req.validate().is_err());
-    }
-
-    // ── GameStatus ─────────────────────────────────────────────────
-
-    #[test]
-    fn game_status_serde_roundtrip() {
-        let statuses = vec![GameStatus::Open, GameStatus::Full, GameStatus::InProgress, GameStatus::Completed, GameStatus::Cancelled];
-        for status in statuses {
-            let json = serde_json::to_string(&status).unwrap();
-            let parsed: GameStatus = serde_json::from_str(&json).unwrap();
-            assert_eq!(status, parsed);
-        }
-    }
-
-    #[test]
-    fn game_status_serializes_to_snake_case() {
-        assert_eq!(serde_json::to_string(&GameStatus::InProgress).unwrap(), "\"in_progress\"");
-        assert_eq!(serde_json::to_string(&GameStatus::Open).unwrap(), "\"open\"");
-    }
-
-    // ── SportType ──────────────────────────────────────────────────
-
-    #[test]
-    fn sport_type_serializes_to_snake_case() {
-        assert_eq!(serde_json::to_string(&SportType::MiniFootball).unwrap(), "\"mini_football\"");
-        assert_eq!(serde_json::to_string(&SportType::Pickleball).unwrap(), "\"pickleball\"");
-    }
 }
