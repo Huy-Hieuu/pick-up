@@ -1,0 +1,12 @@
+mobile/
+web-owner/
+_bmad/
+_bmad-output/
+.idea/
+.ai/
+.claude/
+.git/
+docs/
+target/
+*.html
+AGENTS.md

@@ -1,0 +1,497 @@
+{
+  "info": {
+    "name": "PickUpCollection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "PickUp API Collection for testing"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/health",
+            "description": "Health check"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST /auth/register",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"0909123123\",\n  \"email\": \"test@example.com\",\n  \"display_name\": \"John Doe\",\n  \"password\": \"password123\"\n}"
+            },
+            "description": "Register new user. Returns access_token + refresh_token.\n\n- phone: Vietnamese format (10 digits)\n- email: valid email\n- password: 8–128 characters"
+          }
+        },
+        {
+          "name": "POST /auth/login",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "description": "Login. 5 failed attempts → 5 min lockout."
+          }
+        },
+        {
+          "name": "POST /auth/otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            },
+            "description": "Send 6-digit OTP to email. Rate limited: 1 per 60 seconds per email."
+          }
+        },
+        {
+          "name": "POST /auth/verify",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"phone\": \"0909123123\",\n  \"code\": \"123456\"\n}"
+            },
+            "description": "Verify OTP. Max 3 attempts. Returns access_token + refresh_token.\n\nRequires existing account (no auto-creation)."
+          }
+        },
+        {
+          "name": "POST /auth/refresh",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"REPLACE_WITH_REFRESH_TOKEN\"\n}"
+            },
+            "description": "Refresh tokens. Old tokens invalidated if user reset password after token was issued."
+          }
+        },
+        {
+          "name": "GET /auth/me",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/auth/me",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Get current user profile. Protected route (require_auth middleware)."
+          }
+        },
+        {
+          "name": "PATCH /auth/me",
+          "request": {
+            "method": "PATCH",
+            "url": "http://localhost:8080/auth/me",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"John Updated\",\n  \"avatar_url\": \"https://example.com/new-avatar.jpg\"\n}"
+            },
+            "description": "Update profile. Protected route.\n\n- display_name: max 50 chars (auto-trimmed)\n- avatar_url: must be valid URL (validated)\n- Both fields are optional (absent = no change, null = clear)"
+          }
+        },
+        {
+          "name": "POST /auth/forgot-password",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/forgot-password",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            },
+            "description": "Step 1: Send OTP for password reset. Always returns same response (no user enumeration)."
+          }
+        },
+        {
+          "name": "POST /auth/verify-reset-otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify-reset-otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
+            },
+            "description": "Step 2: Verify OTP, get temp reset_token. Max 3 attempts."
+          }
+        },
+        {
+          "name": "POST /auth/set-new-password",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/set-new-password",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset_token\": \"REPLACE_WITH_RESET_TOKEN_FROM_STEP_2\",\n  \"new_password\": \"newpassword123\"\n}"
+            },
+            "description": "Step 3: Set new password. new_password: 8–128 chars. Invalidates all existing tokens."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Courts",
+      "item": [
+        {
+          "name": "GET /courts (list all)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:8080/courts?page=1&per_page=20",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["courts"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "per_page", "value": "20" },
+                { "key": "sport_type", "value": "pickleball", "disabled": true, "description": "pickleball | mini_football" }
+              ]
+            },
+            "description": "List courts. Public (no auth).\n\nPagination: page (default 1), per_page (default 20, max 50)."
+          }
+        },
+        {
+          "name": "GET /courts (geo search)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:8080/courts?lat=10.762622&lng=106.660172&radius_km=5&sport_type=pickleball",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["courts"],
+              "query": [
+                { "key": "lat", "value": "10.762622", "description": "Required with lng" },
+                { "key": "lng", "value": "106.660172", "description": "Required with lat" },
+                { "key": "radius_km", "value": "5", "description": "0.1–50, default 10" },
+                { "key": "sport_type", "value": "pickleball", "description": "pickleball | mini_football" },
+                { "key": "page", "value": "1", "disabled": true },
+                { "key": "per_page", "value": "20", "disabled": true }
+              ]
+            },
+            "description": "Geo search courts by Haversine distance. Both lat + lng required together."
+          }
+        },
+        {
+          "name": "GET /courts/:id",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000",
+            "description": "Court detail. Public."
+          }
+        },
+        {
+          "name": "GET /courts/:id/slots",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000/slots?date=2026-05-15",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["courts", "550e8400-e29b-41d4-a716-446655440000", "slots"],
+              "query": [
+                { "key": "date", "value": "2026-05-15", "description": "Required. YYYY-MM-DD" }
+              ]
+            },
+            "description": "List slots for a court on a specific date. Public."
+          }
+        },
+        {
+          "name": "POST /courts/:id/slots/:slot_id/book",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000/slots/660e8400-e29b-41d4-a716-446655440000/book",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "Book a slot. Auth required.\n\nChecks: slot available, not past, no overlapping bookings for same user."
+          }
+        },
+        {
+          "name": "POST /courts/:id/slots/:slot_id/cancel",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/courts/550e8400-e29b-41d4-a716-446655440000/slots/660e8400-e29b-41d4-a716-446655440000/cancel",
+            "header": [
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "description": "Cancel a booking. Only the booker can cancel. Blocked if active game exists on the slot."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Games",
+      "item": [
+        {
+          "name": "GET /games (list all)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:8080/games?page=1&per_page=20",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["games"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "per_page", "value": "20" },
+                { "key": "sport_type", "value": "pickleball", "disabled": true, "description": "pickleball | mini_football" },
+                { "key": "status", "value": "open", "disabled": true, "description": "open | full | in_progress | completed | cancelled. Default: open + full" },
+                { "key": "date", "value": "2026-05-15", "disabled": true, "description": "YYYY-MM-DD" }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "List games. Auth required. Default shows open + full games."
+          }
+        },
+        {
+          "name": "GET /games (geo search)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:8080/games?lat=10.762622&lng=106.660172&radius_km=5&sport_type=pickleball",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["games"],
+              "query": [
+                { "key": "lat", "value": "10.762622", "description": "Required with lng" },
+                { "key": "lng", "value": "106.660172", "description": "Required with lat" },
+                { "key": "radius_km", "value": "5", "description": "0.1–50, default 10" },
+                { "key": "sport_type", "value": "pickleball", "description": "pickleball | mini_football" },
+                { "key": "status", "value": "open", "disabled": true },
+                { "key": "date", "value": "2026-05-15", "disabled": true },
+                { "key": "page", "value": "1", "disabled": true },
+                { "key": "per_page", "value": "20", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Geo search games. Both lat + lng required together."
+          }
+        },
+        {
+          "name": "POST /games",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"court_slot_id\": \"660e8400-e29b-41d4-a716-446655440000\",\n  \"sport_type\": \"pickleball\",\n  \"max_players\": 4,\n  \"description\": \"Casual game, all levels welcome!\"\n}"
+            },
+            "description": "Create game. Creator auto-joins as first player.\n\n- court_slot_id: must be booked by the caller\n- sport_type: must match the court's sport_type\n- max_players: 2–30\n- description: max 500 chars, optional"
+          }
+        },
+        {
+          "name": "GET /games/:id",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Game detail with court, slot, and player profiles."
+          }
+        },
+        {
+          "name": "POST /games/:id/join",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/join",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Join a game. Checks: game open, not full, not already joined, no time overlap with other games."
+          }
+        },
+        {
+          "name": "POST /games/:id/leave",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/leave",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Leave a game. Creator cannot leave (must cancel instead)."
+          }
+        },
+        {
+          "name": "POST /games/:id/cancel",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/cancel",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Cancel game (creator only). Removes all players and releases the court slot back to Available."
+          }
+        },
+        {
+          "name": "PATCH /games/:id/status",
+          "request": {
+            "method": "PATCH",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"in_progress\"\n}"
+            },
+            "description": "Update game status (creator only).\n\nValid transitions:\n- open/full → in_progress\n- in_progress → completed"
+          }
+        },
+        {
+          "name": "GET /games/:id/split",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/split",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Get bill split calculation. Returns per_player amount, remainder, and payment status per player."
+          }
+        },
+        {
+          "name": "GET /games/:id/share",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/share",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "Generate share deeplink with pre-filled message."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "GET /games/:id/payments",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments",
+            "header": [{ "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }],
+            "description": "List all payments for a game."
+          }
+        },
+        {
+          "name": "POST /games/:id/payments/initiate (Momo)",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments/initiate",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"provider\": \"momo\"\n}" },
+            "description": "Initiate Momo payment. Returns pay_url for redirect."
+          }
+        },
+        {
+          "name": "POST /games/:id/payments/initiate (ZaloPay)",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/games/770e8400-e29b-41d4-a716-446655440000/payments/initiate",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"provider\": \"zalopay\"\n}" },
+            "description": "Initiate ZaloPay payment. Returns pay_url for redirect."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "POST /upload/avatar",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/upload/avatar",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content_type\": \"image/jpeg\"\n}"
+            },
+            "description": "Get presigned S3 upload URL for avatar.\n\n- content_type: image/jpeg | image/png | image/webp\n- Rate limited: 5 requests/min per user\n- URL expires in 15 minutes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (No Auth)",
+      "item": [
+        {
+          "name": "POST /webhooks/momo",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/webhooks/momo",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "Momo payment callback. HMAC signature verified. No auth."
+          }
+        },
+        {
+          "name": "POST /webhooks/zalopay",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/webhooks/zalopay",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "description": "ZaloPay payment callback. MAC checksum verified. No auth."
+          }
+        }
+      ]
+    },
+    {
+      "name": "WebSocket",
+      "item": [
+        {
+          "name": "WS /ws/games/:id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "ws://localhost:8080/ws/games/770e8400-e29b-41d4-a716-446655440000?token=REPLACE_WITH_ACCESS_TOKEN",
+              "protocol": "ws",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["ws", "games", "770e8400-e29b-41d4-a716-446655440000"],
+              "query": [
+                { "key": "token", "value": "REPLACE_WITH_ACCESS_TOKEN", "description": "JWT access token" }
+              ]
+            },
+            "description": "WebSocket game lobby.\n\n- Must be a member of the game (403 if not)\n- Max frame size: 64 KB\n- Ping interval: 30s, pong timeout: 60s\n- Server broadcasts: player_joined, player_left, game_status_changed, payment_updated, split_recalculated, game_cancelled"
+          }
+        }
+      ]
+    }
+  ]
+}

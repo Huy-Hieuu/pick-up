@@ -1,6 +1,10 @@
-.env
-.env.*
-!.env.example
-node_modules/
-target/
-.DS_Store
+.claude
+_bmad
+_bmad-output
+.idea
+.ai
+server/target
+server/.env
+server/Cargo.lock
+.gitnexus
+AGENTS.md
