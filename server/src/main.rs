@@ -77,9 +77,12 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     tracing::info!("Server listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(cancel_token))
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(cancel_token))
+    .await?;
 
     if tokio::time::timeout(std::time::Duration::from_secs(12), async {
         for worker in worker_handles {

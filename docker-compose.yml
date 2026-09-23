@@ -77,6 +77,8 @@ services:
       CORS_ORIGINS: http://localhost:8081
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://pickup.app}
       APP_PUBLIC_API_URL: ${APP_PUBLIC_API_URL:-https://api.pickup.app}
+      APP_REQUESTS_PER_MINUTE: ${APP_REQUESTS_PER_MINUTE:-300}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       DATABASE_URL: postgres://pickup:pickup@postgres:5432/pickup
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}

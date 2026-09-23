@@ -58,6 +58,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected_auth_routes)
         .route("/ws/games/{game_id}", get(crate::ws::lobby::ws_game_lobby))
         .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::rate_limit::limit_requests,
+        ))
         .layer(crate::middleware::cors::cors_layer(&state.settings))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024))
         .layer(tower_http::timeout::TimeoutLayer::with_status_code(

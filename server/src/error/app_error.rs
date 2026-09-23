@@ -170,6 +170,10 @@ impl IntoResponse for AppError {
             response
                 .headers_mut()
                 .insert(axum::http::header::RETRY_AFTER, "5".parse().unwrap());
+        } else if status == StatusCode::TOO_MANY_REQUESTS {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, "60".parse().unwrap());
         }
         response
     }
@@ -249,6 +253,13 @@ mod tests {
             into_status_code(AppError::Unimplemented("test".into())),
             StatusCode::NOT_IMPLEMENTED
         );
+    }
+
+    #[test]
+    fn rate_limit_returns_retry_after() {
+        let response = AppError::TooManyRequests("retry later".into()).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "60");
     }
 
     #[test]

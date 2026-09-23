@@ -15,6 +15,14 @@ before serving the new binary. Do not roll back to stateless token validation.
 - Login has a five-attempt/300-second budget per exact email, including unknown
   accounts and successful attempts. Deploy additional IP/global limits at ingress.
 - Argon2 runs on bounded blocking workers; saturation returns 429.
+- REST requests and WebSocket handshakes use a Redis-backed per-IP rate limit
+  (300 per fixed minute by default); liveness/readiness probes are exempt. Redis
+  keys contain an HMAC of the client IP, not the raw address. Direct peer IPs are
+  trusted unless `TRUSTED_PROXY_CIDRS` explicitly allows the socket peer to
+  supply `X-Forwarded-For`; the proxy-facing chain is trusted first. Set this
+  only for proxies that strip/overwrite incoming client headers. This API quota
+  does not replace load-balancer/WAF protections against distributed or
+  volumetric traffic.
 - `JWT_SECRET` must be a random value of at least 32 bytes. Generate one with
   `openssl rand -hex 32`; keep it in your deployment secret store. Access TTL is
   limited to 1–60 minutes and refresh TTL to 1–90 days.

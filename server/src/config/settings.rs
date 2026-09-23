@@ -1,5 +1,7 @@
 use std::env;
 
+use ipnet::IpNet;
+
 /// Application settings loaded from environment variables.
 ///
 /// In production, these come from the host environment.
@@ -24,6 +26,8 @@ pub struct AppSettings {
     pub cors_origins: Vec<String>,
     pub public_app_url: String,
     pub public_api_url: String,
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    pub requests_per_minute: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +116,27 @@ impl Settings {
                     .collect(),
                 public_app_url: public_https_url("APP_PUBLIC_URL", "https://pickup.app")?,
                 public_api_url: public_https_url("APP_PUBLIC_API_URL", "https://api.pickup.app")?,
+                trusted_proxy_cidrs: env::var("TRUSTED_PROXY_CIDRS")
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|cidr| !cidr.is_empty())
+                    .map(|cidr| {
+                        cidr.parse::<IpNet>().map_err(|e| {
+                            anyhow::anyhow!("Invalid TRUSTED_PROXY_CIDRS entry {cidr}: {e}")
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                requests_per_minute: {
+                    let limit: u32 = env::var("APP_REQUESTS_PER_MINUTE")
+                        .unwrap_or_else(|_| "300".into())
+                        .parse()?;
+                    anyhow::ensure!(
+                        (1..=100_000).contains(&limit),
+                        "APP_REQUESTS_PER_MINUTE must be 1–100000"
+                    );
+                    limit
+                },
             },
             database: DatabaseSettings {
                 url: env::var("DATABASE_URL")

@@ -78,14 +78,17 @@ See [authentication changes](docs/backend-security.md),
 The [real-time lobby protocol](docs/backend-realtime.md) documents committed
 cross-instance updates, connection/access limits, and reconnect behavior.
 The [email queue operations guide](docs/backend-email.md) covers leases, retries
-and Redis persistence.
+and Redis persistence. [API rate limits and proxy trust](docs/backend-rate-limits.md)
+documents the default shared quota and safe reverse-proxy setup.
 
 Remaining launch gates:
 
 - PSP sandbox acceptance, provider status-query reconciliation, refunds,
   chargebacks and real-credential rollout. Complete those checks before accepting
   real money.
-- Phone-number ownership verification and IP/global ingress rate limiting.
+- Phone-number ownership verification and edge/WAF protection against
+  distributed or volumetric abuse. The API has a per-IP rate limit; it does not
+  replace upstream DDoS protection.
 - SMTP delivery must still be tested with your provider; monitor the bounded,
   redacted `email:dead` list. Compose enables Redis Append Only File persistence;
   production Redis needs equivalent durable storage and recovery.

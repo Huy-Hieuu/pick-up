@@ -46,6 +46,8 @@ async fn state_with_payment_endpoints(
             cors_origins: vec!["https://app.example.com".into()],
             public_app_url: "https://app.example.com".into(),
             public_api_url: "https://api.example.com".into(),
+            trusted_proxy_cidrs: Vec::new(),
+            requests_per_minute: 600,
         },
         database: DatabaseSettings {
             url: String::new(),
@@ -186,6 +188,59 @@ async fn router_enforces_auth_and_responds_to_health_and_body_limits(pool: PgPoo
             .0,
         StatusCode::SERVICE_UNAVAILABLE
     );
+    assert_eq!(
+        call(&app, "GET", "/health", serde_json::Value::Null, None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn per_ip_rate_limit_is_shared_and_health_probes_are_exempt(pool: PgPool) {
+    let mut state = state(pool).await;
+    Arc::make_mut(&mut state.settings).app.requests_per_minute = 2;
+    let app = build_router(state);
+    let bytes = Uuid::new_v4().as_bytes()[0];
+    let peer =
+        axum::extract::ConnectInfo(std::net::SocketAddr::from(([198, 51, 100, bytes], 12345)));
+    for _ in 0..2 {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        request.extensions_mut().insert(peer);
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    // A second socket peer has an independent window even when the request
+    // handler cannot extract authentication because the body is malformed.
+    let other_peer = axum::extract::ConnectInfo(std::net::SocketAddr::from((
+        [198, 51, 100, bytes.wrapping_add(1)],
+        12345,
+    )));
+    let mut other_request = Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    other_request.extensions_mut().insert(other_peer);
+    assert_eq!(
+        app.clone().oneshot(other_request).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    let mut request = Request::builder()
+        .uri("/another-route")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(peer);
+    let limited = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited.headers()[axum::http::header::RETRY_AFTER], "60");
     assert_eq!(
         call(&app, "GET", "/health", serde_json::Value::Null, None)
             .await
