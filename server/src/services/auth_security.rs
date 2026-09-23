@@ -74,6 +74,7 @@ pub(super) async fn send_otp(
     use rand::Rng;
     let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
     let job = crate::jobs::email::EmailJob {
+        id: Uuid::new_v4(),
         to: email.to_owned(),
         subject: format!("Your PickUp {purpose} code"),
         body: format!(
@@ -87,10 +88,13 @@ pub(super) async fn send_otp(
     let sent: i32 = redis::Script::new(
         r#"
         if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+        local length = redis.call('LLEN', KEYS[4]) + redis.call('HLEN', KEYS[5]) + redis.call('ZCARD', KEYS[6]) + redis.call('HLEN', KEYS[7])
+        if length >= tonumber(ARGV[4]) then return -1 end
         redis.call('SET', KEYS[1], '1', 'EX', 60)
         redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
         redis.call('DEL', KEYS[3])
         redis.call('LPUSH', KEYS[4], ARGV[3])
+        if redis.call('LLEN', KEYS[8]) == 0 then redis.call('LPUSH', KEYS[8], 'ready') end
         return 1
     "#,
     )
@@ -98,15 +102,25 @@ pub(super) async fn send_otp(
     .key(format!("otp:{purpose}:{email}"))
     .key(format!("otp:{purpose}:attempts:{email}"))
     .key("email:queue")
+    .key("email:processing")
+    .key("email:retry")
+    .key("email:retry-payloads")
+    .key("email:wake")
     .arg(code)
     .arg(ttl)
     .arg(payload)
+    .arg(10_000_i64)
     .invoke_async(&mut redis.clone())
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
     if sent == 0 {
         return Err(AppError::TooManyRequests(
             "Please wait before requesting another OTP".into(),
+        ));
+    }
+    if sent < 0 {
+        return Err(AppError::TooManyRequests(
+            "Email queue is full; retry later".into(),
         ));
     }
     Ok(())

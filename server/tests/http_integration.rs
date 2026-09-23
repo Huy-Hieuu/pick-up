@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -9,6 +11,7 @@ use pickup_server::{
     state::AppState,
 };
 use sqlx::PgPool;
+use std::time::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -270,5 +273,135 @@ async fn cancelled_email_worker_does_not_block_on_an_empty_queue(pool: PgPool) {
         ),
     )
     .await
-    .expect("shutdown must not issue BRPOP with an infinite timeout");
+    .expect("shutdown releases email worker leases promptly");
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn email_worker_delivers_queued_otp_through_smtp(pool: PgPool) {
+    use pickup_server::jobs::email::{enqueue_email, run_email_worker, EmailJob};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let state = state(pool).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let smtp_address = listener.local_addr().unwrap();
+    let expected = format!("otp-worker-test-{}", Uuid::new_v4());
+    let (delivered, delivered_rx) = tokio::sync::oneshot::channel::<String>();
+    let (diagnostics, diagnostic_rx) = tokio::sync::oneshot::channel::<String>();
+    let smtp_cancel = tokio_util::sync::CancellationToken::new();
+    let server_cancel = smtp_cancel.clone();
+    let target = expected.clone();
+    let diagnostic_tx = Arc::new(std::sync::Mutex::new(Some(diagnostics)));
+    let diagnostic_server = diagnostic_tx.clone();
+    let mut delivered = Some(delivered);
+    let smtp = tokio::spawn(async move {
+        loop {
+            let accepted = tokio::select! {
+                _ = server_cancel.cancelled() => return,
+                connection = listener.accept() => connection.unwrap().0,
+            };
+            let mut client = BufReader::new(accepted);
+            client
+                .get_mut()
+                .write_all(b"220 local.test ESMTP\r\n")
+                .await
+                .unwrap();
+            let mut captured = String::new();
+            loop {
+                let mut command = String::new();
+                if client.read_line(&mut command).await.unwrap() == 0 {
+                    break;
+                }
+                let command = command.trim_end();
+                if !(command.starts_with("EHLO")
+                    || command.starts_with("HELO")
+                    || command.starts_with("MAIL FROM")
+                    || command.starts_with("RCPT TO")
+                    || command == "NOOP"
+                    || command == "RSET"
+                    || command == "DATA"
+                    || command == "QUIT")
+                {
+                    if let Some(diagnostic) = diagnostic_server.lock().unwrap().take() {
+                        let _ = diagnostic.send(command.to_owned());
+                    }
+                    client
+                        .get_mut()
+                        .write_all(b"500 unsupported\r\n")
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                let response = if command.starts_with("EHLO") || command.starts_with("HELO") {
+                    "250-local.test\r\n250 SIZE 1048576\r\n"
+                } else if command.starts_with("MAIL FROM") || command.starts_with("RCPT TO") {
+                    "250 accepted\r\n"
+                } else if command == "DATA" {
+                    client
+                        .get_mut()
+                        .write_all(b"354 continue\r\n")
+                        .await
+                        .unwrap();
+                    loop {
+                        let mut line = String::new();
+                        if client.read_line(&mut line).await.unwrap() == 0 {
+                            return;
+                        }
+                        if line == ".\r\n" {
+                            break;
+                        }
+                        captured.push_str(&line);
+                    }
+                    if captured.contains(&target) {
+                        if let Some(delivered) = delivered.take() {
+                            let _ = delivered.send(captured.clone());
+                        }
+                    }
+                    "250 queued\r\n"
+                } else if command == "QUIT" {
+                    client.get_mut().write_all(b"221 bye\r\n").await.unwrap();
+                    break;
+                } else {
+                    "250 ok\r\n"
+                };
+                client
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+        }
+    });
+
+    let redis = state.redis.clone();
+    let mut email = state.settings.email.clone();
+    email.smtp_host = "127.0.0.1".into();
+    email.smtp_port = smtp_address.port();
+    email.use_tls = false;
+    let job = EmailJob {
+        id: Uuid::new_v4(),
+        to: "delivery@example.test".into(),
+        subject: expected.clone(),
+        body: "Your OTP is 654321".into(),
+        retry_count: 0,
+    };
+    enqueue_email(&redis, &job).await.unwrap();
+    let shutdown = state.shutdown.clone();
+    let worker = tokio::spawn(run_email_worker(redis, email, shutdown.clone()));
+    let message = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(20), delivered_rx) => result.expect("SMTP worker should deliver the queued job").unwrap(),
+        error = diagnostic_rx => panic!("Unexpected SMTP command: {error:?}"),
+    };
+    assert!(message.contains("To: delivery@example.test"));
+    assert!(message.contains("Your OTP is 654321"));
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    smtp_cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(2), smtp)
+        .await
+        .unwrap()
+        .unwrap();
 }

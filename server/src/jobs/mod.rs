@@ -9,26 +9,27 @@ use tokio_util::sync::CancellationToken;
 ///
 /// Called from `main.rs` during server startup.
 /// Workers check the CancellationToken for graceful shutdown.
-pub async fn start_workers(state: &AppState, cancel: CancellationToken) -> anyhow::Result<()> {
+pub async fn start_workers(
+    state: &AppState,
+    cancel: CancellationToken,
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
     crate::jobs::email::build_smtp_transport(&state.settings.email)?;
-    state
+    let redis = crate::db::create_redis(&state.settings.redis).await?;
+    let lobby_worker = state
         .lobby
         .start_listener(&state.pool, cancel.clone())
         .await?;
-    // Spawn the email delivery worker.
-    // A blocking pop must not share the multiplexed request connection.
-    let redis = crate::db::create_redis(&state.settings.redis).await?;
     let email_settings = state.settings.email.clone();
-    tokio::spawn(crate::jobs::email::run_email_worker(
+    let email_worker = tokio::spawn(crate::jobs::email::run_email_worker(
         redis,
         email_settings,
         cancel.clone(),
     ));
-    tokio::spawn(run_payment_expiry_worker(state.pool.clone(), cancel));
+    let payment_worker = tokio::spawn(run_payment_expiry_worker(state.pool.clone(), cancel));
 
     tracing::info!("Background workers started");
 
-    Ok(())
+    Ok(vec![lobby_worker, email_worker, payment_worker])
 }
 
 async fn run_payment_expiry_worker(pool: sqlx::PgPool, cancel: CancellationToken) {

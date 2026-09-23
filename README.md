@@ -77,6 +77,8 @@ See [authentication changes](docs/backend-security.md),
 [payment protocol and remaining launch checks](docs/backend-payments.md).
 The [real-time lobby protocol](docs/backend-realtime.md) documents committed
 cross-instance updates, connection/access limits, and reconnect behavior.
+The [email queue operations guide](docs/backend-email.md) covers leases, retries
+and Redis persistence.
 
 Remaining launch gates:
 
@@ -84,9 +86,9 @@ Remaining launch gates:
   chargebacks and real-credential rollout. Complete those checks before accepting
   real money.
 - Verified registration/contact ownership and IP/global ingress rate limiting.
-- Durable email acknowledgement/recovery: the current list queue can lose an
-  in-flight job if a process crashes after popping it. SMTP delivery must be
-  tested with your provider; monitor the `email:dead` queue.
+- SMTP delivery must still be tested with your provider; monitor the bounded,
+  redacted `email:dead` list. Compose enables Redis Append Only File persistence;
+  production Redis needs equivalent durable storage and recovery.
 - Production HTTPS/CORS/storage configuration, restricted network access,
   secrets, migration preflight, monitoring/alerts, backups and restore drills.
 - Load tests and end-to-end provider/storage acceptance tests.

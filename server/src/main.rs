@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let cancel_clone = cancel_token.clone();
 
     // Start background jobs (email queue worker, etc.).
-    pickup_server::jobs::start_workers(&state, cancel_clone).await?;
+    let worker_handles = pickup_server::jobs::start_workers(&state, cancel_clone).await?;
 
     // Build the Axum router with all routes.
     let app = routes::build_router(state);
@@ -80,6 +80,19 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(cancel_token))
         .await?;
+
+    if tokio::time::timeout(std::time::Duration::from_secs(12), async {
+        for worker in worker_handles {
+            if let Err(error) = worker.await {
+                tracing::error!(%error, "Background worker stopped unexpectedly");
+            }
+        }
+    })
+    .await
+    .is_err()
+    {
+        tracing::error!("Background workers did not stop within the grace period");
+    }
 
     tracing::info!("Server shutdown complete");
     Ok(())
