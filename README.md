@@ -76,6 +76,8 @@ strings so WebSocket bearer tokens are not logged.
 ## Release status
 
 This is a hardened backend foundation, **not yet a complete production release**.
+The [release acceptance checklist](docs/backend-release-checklist.md) records
+verified fixes, rollout order and the remaining external/product requirements.
 See [authentication changes](docs/backend-security.md),
 [billing behavior and migration checks](docs/backend-billing.md), and the
 [payment protocol and remaining launch checks](docs/backend-payments.md).

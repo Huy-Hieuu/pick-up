@@ -92,6 +92,8 @@ async fn state_with_payment_endpoints(
             endpoint: zalopay_endpoint,
         },
         s3: S3Settings {
+            internal_endpoint: "http://localhost:9000".into(),
+            region: "us-east-1".into(),
             endpoint: "http://localhost:9000".into(),
             access_key: "test".into(),
             secret_key: "test".into(),

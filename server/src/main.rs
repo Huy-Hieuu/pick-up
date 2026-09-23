@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
             None,
             "static",
         );
-        let region = aws_types::region::Region::new("auto");
+        let region = aws_types::region::Region::new(settings.s3.region.clone());
         let cfg = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&settings.s3.endpoint)
             .credentials_provider(creds)
@@ -52,14 +52,24 @@ async fn main() -> anyhow::Result<()> {
 
         let mut s3_builder = aws_sdk_s3::config::Builder::from(&s3_config);
         s3_builder.set_force_path_style(Some(true));
-        s3_builder.set_region(Some(aws_types::region::Region::new("auto")));
+        s3_builder.set_region(Some(aws_types::region::Region::new(
+            settings.s3.region.clone(),
+        )));
         let s3_config = s3_builder.build();
 
         aws_sdk_s3::Client::from_conf(s3_config)
     };
 
     // Build shared application state.
-    let state = AppState::new(pool, redis, settings.clone(), s3_client);
+    let internal_s3 = aws_sdk_s3::Client::from_conf(
+        s3_client
+            .config()
+            .to_builder()
+            .endpoint_url(&settings.s3.internal_endpoint)
+            .build(),
+    );
+    let mut state = AppState::new(pool, redis, settings.clone(), s3_client);
+    state.s3_client = internal_s3;
 
     // Cancellation token for coordinated shutdown.
     let cancel_token = state.shutdown.clone();

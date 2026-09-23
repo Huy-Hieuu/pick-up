@@ -88,6 +88,8 @@ pub struct ZaloPaySettings {
 #[derive(Debug, Clone)]
 pub struct S3Settings {
     pub endpoint: String,
+    pub internal_endpoint: String,
+    pub region: String,
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
@@ -233,6 +235,10 @@ impl Settings {
             s3: S3Settings {
                 endpoint: env::var("S3_ENDPOINT")
                     .unwrap_or_else(|_| "http://localhost:9000".into()),
+                internal_endpoint: env::var("S3_INTERNAL_ENDPOINT").unwrap_or_else(|_| {
+                    env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".into())
+                }),
+                region: env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".into()),
                 access_key: env::var("S3_ACCESS_KEY")
                     .map_err(|_| anyhow::anyhow!("S3_ACCESS_KEY is required"))?,
                 secret_key: env::var("S3_SECRET_KEY")

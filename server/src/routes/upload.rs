@@ -36,7 +36,7 @@ pub async fn get_avatar_upload_url(
     let upload_id = uuid::Uuid::new_v4();
 
     let presigned = UploadService::generate_avatar_presigned_put(
-        &state.s3_client,
+        &state.s3_upload_client,
         &state.settings.s3,
         auth_user.user_id(),
         upload_id,

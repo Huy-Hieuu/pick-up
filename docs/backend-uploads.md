@@ -43,6 +43,14 @@ records must remain while their URLs can be used in profiles. Serve the media
 origin with HTTPS, `X-Content-Type-Options: nosniff`, and a restrictive CSP.
 The server sets PNG content type and immutable caching on sanitized objects.
 
+`S3_ENDPOINT` is the client-reachable signing endpoint; `S3_INTERNAL_ENDPOINT`
+is used for server reads/writes and defaults to the signing endpoint. Docker
+Compose uses `http://minio:9000` internally and `http://localhost:9000` for local
+browser PUTs. Set `S3_REGION` to the provider's signing region (default
+`us-east-1`; use `auto` for providers that require it). For phones on a LAN,
+configure a client-reachable signing endpoint and public media URL. Production
+client URLs must use HTTPS.
+
 Local integration tests verify ownership, bounded download length, completion
 idempotency, pixel re-encoding, invalid content rejection, and profile assignment.
 They do not validate the deployed bucket/CDN policy; that is a rollout gate.

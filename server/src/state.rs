@@ -15,6 +15,7 @@ pub struct AppState {
     pub redis: ConnectionManager,
     pub settings: Arc<Settings>,
     pub s3_client: Client,
+    pub s3_upload_client: Client,
     pub shutdown: tokio_util::sync::CancellationToken,
     pub lobby: crate::ws::hub::LobbyHub,
 }
@@ -41,6 +42,7 @@ impl AppState {
             pool,
             redis,
             settings: Arc::new(settings),
+            s3_upload_client: s3_client.clone(),
             s3_client,
             shutdown: tokio_util::sync::CancellationToken::new(),
             lobby: crate::ws::hub::LobbyHub::default(),
