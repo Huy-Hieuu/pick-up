@@ -21,8 +21,8 @@ impl PaymentService {
         ).bind(game_id).fetch_all(pool).await?)
     }
 
-    /// Expire provider orders only after their provider TTL and any creation
-    /// lease have elapsed. SKIP LOCKED safely distributes work across instances.
+    /// A local deadline does not prove non-payment. Freeze stale orders until
+    /// the provider confirms their final state; SKIP LOCKED distributes work.
     pub async fn expire_stale_pending(pool: &PgPool) -> AppResult<u64> {
         let result = sqlx::query(r#"
             WITH expired AS (
@@ -31,11 +31,73 @@ impl PaymentService {
                     AND (provider_create_claim_until IS NULL OR provider_create_claim_until <= now())
                 ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED
             )
-            UPDATE payments p SET status = 'expired', provider_create_claim = NULL,
+            UPDATE payments p SET status = 'disputed', dispute_reason = 'awaiting_provider_status', provider_create_claim = NULL,
                 provider_create_claim_until = NULL
             FROM expired WHERE p.id = expired.id
         "#).execute(pool).await?;
         Ok(result.rows_affected())
+    }
+
+    /// Claim a bounded batch without holding database locks during network I/O.
+    /// Claims become eligible again after two minutes if the worker crashes.
+    pub async fn reconcile_pending(pool: &PgPool, settings: &Settings) -> AppResult<u64> {
+        let orders: Vec<Reservation> = sqlx::query_as(r#"
+            WITH due AS (
+                SELECT id FROM payments
+                WHERE (status = 'pending' OR (status = 'disputed' AND dispute_reason IN ('provider_creation_uncertain', 'awaiting_provider_status')))
+                    AND reconcile_after <= now()
+                    AND (provider_create_claim_until IS NULL OR provider_create_claim_until <= now())
+                ORDER BY reconcile_after LIMIT 4 FOR UPDATE SKIP LOCKED
+            )
+            UPDATE payments p SET reconcile_after = now() + interval '2 minutes'
+            FROM due WHERE p.id = due.id
+            RETURNING p.id, p.amount, p.provider, p.provider_txn_id, p.status,
+                p.provider_order_id, p.provider_payment_url, p.expires_at,
+                p.provider_create_claim, p.provider_create_claim_until, p.dispute_reason
+        "#).fetch_all(pool).await?;
+        let mut resolved = 0;
+        for order in orders {
+            let result = match payment_provider::query_order(settings, &order).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!(payment_id = %order.id, "Provider reconciliation query failed; reservation retained");
+                    continue;
+                }
+            };
+            if result.outcome == "processing" {
+                continue;
+            }
+            let fingerprint = hex::encode(Sha256::digest(
+                serde_json::to_vec(&(
+                    "query",
+                    &order.provider_order_id,
+                    result.amount,
+                    &result.transaction_id,
+                    result.outcome,
+                ))
+                .map_err(|e| AppError::Internal(e.into()))?,
+            ));
+            match apply_provider_event(
+                pool,
+                order.provider,
+                VerifiedProviderEvent {
+                    order_id: &order.provider_order_id,
+                    request_id: None,
+                    received_amount: result.amount,
+                    provider_txn_id: result.transaction_id,
+                    outcome: result.outcome,
+                    payload_hash: fingerprint,
+                },
+            )
+            .await
+            {
+                Ok(()) => resolved += 1,
+                Err(_) => {
+                    tracing::error!(payment_id = %order.id, "Provider reconciliation settlement failed; retry retained")
+                }
+            }
+        }
+        Ok(resolved)
     }
 
     /// Reserve the current split under a game-row lock. PSP calls happen after
@@ -90,7 +152,7 @@ impl PaymentService {
         let existing: Option<Reservation> = sqlx::query_as(
             r#"
             SELECT id, amount, provider, provider_txn_id, status, provider_order_id, provider_payment_url,
-                   expires_at, provider_create_claim, provider_create_claim_until
+                   expires_at, provider_create_claim, provider_create_claim_until, dispute_reason
             FROM payments WHERE game_id = $1 AND user_id = $2
                 AND status IN ('pending', 'paid', 'disputed')
             ORDER BY created_at DESC LIMIT 1 FOR UPDATE
@@ -118,9 +180,10 @@ impl PaymentService {
                 ))
             }
             Some(row) if row.expires_at.is_some_and(|expires| expires <= Utc::now()) => {
-                sqlx::query("UPDATE payments SET status = 'expired', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
+                sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'awaiting_provider_status', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
                     .bind(row.id).execute(&mut *tx).await?;
-                new_reservation(&mut tx, game_id, user_id, req.provider, amount, claim).await?
+                tx.commit().await?;
+                return Err(AppError::PaymentOrderUncertain);
             }
             Some(row) if row.provider_payment_url.is_some() => row,
             Some(row)
@@ -173,6 +236,14 @@ impl PaymentService {
                 sqlx::query("UPDATE payments SET status = 'expired', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1 AND status = 'pending' AND provider_create_claim = $2")
                     .bind(reservation.id).bind(claim).execute(pool).await?;
                 return Err(AppError::PaymentRejected);
+            }
+            Err(AppError::PaymentOrderUncertain) => {
+                // Without a provider status query, releasing this reservation
+                // at a timer could create a second collectible order. Freeze
+                // the game until a callback or an operator reconciles it.
+                sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_creation_uncertain', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1 AND status = 'pending' AND provider_create_claim = $2")
+                    .bind(reservation.id).bind(claim).execute(pool).await?;
+                return Err(AppError::PaymentOrderUncertain);
             }
             Err(error) => return Err(error),
         };
@@ -242,9 +313,10 @@ impl PaymentService {
         }
         let outcome = match body.result_code {
             0 if body.trans_id > 0 => "paid",
-            9000 => "review", // authorization is not proof of captured funds
-            0 => "review",    // successful results must carry a PSP transaction ID
-            _ => "failed",
+            1000 | 7000 | 7002 | 9000 => "processing",
+            0 => "review", // successful results must carry a PSP transaction ID
+            code if payment_provider::momo_terminal_failure(code) => "failed",
+            _ => "processing",
         };
         let fingerprint = Sha256::digest(message.as_bytes());
         apply_provider_event(
@@ -331,7 +403,7 @@ async fn new_reservation(
             (id, game_id, user_id, amount, provider, provider_order_id, expires_at, provider_create_claim, provider_create_claim_until)
         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '15 minutes', $7, now() + interval '30 seconds')
         RETURNING id, amount, provider, provider_txn_id, status, provider_order_id, provider_payment_url,
-                  expires_at, provider_create_claim, provider_create_claim_until
+                  expires_at, provider_create_claim, provider_create_claim_until, dispute_reason
     "#).bind(id).bind(game_id).bind(user_id).bind(amount).bind(provider).bind(order_id)
         .bind(claim).fetch_one(&mut **tx).await?)
 }
@@ -362,10 +434,23 @@ async fn apply_provider_event(
     event: VerifiedProviderEvent<'_>,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
+    // Same lock order as initiation/membership changes. Late callbacks cannot
+    // race a new order or roster update between its billing check and commit.
+    let game_id: Uuid = sqlx::query_scalar(
+        "SELECT game_id FROM payments WHERE provider = $1 AND provider_order_id = $2",
+    )
+    .bind(provider)
+    .bind(event.order_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query("SELECT id FROM games WHERE id = $1 FOR UPDATE")
+        .bind(game_id)
+        .fetch_one(&mut *tx)
+        .await?;
     let reservation: Option<Reservation> = sqlx::query_as(
         r#"
         SELECT id, amount, provider, provider_txn_id, status, provider_order_id, provider_payment_url,
-               expires_at, provider_create_claim, provider_create_claim_until
+               expires_at, provider_create_claim, provider_create_claim_until, dispute_reason
         FROM payments WHERE provider = $1 AND provider_order_id = $2 FOR UPDATE
     "#,
     )
@@ -384,119 +469,114 @@ async fn apply_provider_event(
         }
     }
 
-    // A replay of the exact signed payload or PSP transaction is a successful
-    // idempotent callback. Reusing a PSP transaction for another order fails.
-    let prior: Option<(Uuid, i64, String)> = sqlx::query_as(
-        "SELECT payment_id, amount_received, outcome FROM payment_provider_events WHERE provider = $1 AND payload_hash = $2"
-    ).bind(provider).bind(&event.payload_hash).fetch_optional(&mut *tx).await?;
-    if let Some((payment_id, amount, prior_outcome)) = prior {
-        if payment_id == payment.id
-            && amount == event.received_amount
-            && prior_outcome == event.outcome
-        {
-            tx.commit().await?;
-            return Ok(());
-        }
-        return Err(AppError::Conflict(
-            "Conflicting replayed payment callback".into(),
-        ));
-    }
-    if let Some(txn_id) = &event.provider_txn_id {
-        let prior: Option<(Uuid, i64, String)> = sqlx::query_as(
-            "SELECT payment_id, amount_received, outcome FROM payment_provider_events WHERE provider = $1 AND (provider_txn_id = $2 OR reported_txn_id = $2) LIMIT 1"
-        ).bind(provider).bind(txn_id).fetch_optional(&mut *tx).await?;
-        if let Some((payment_id, amount, prior_outcome)) = prior {
-            if payment_id == payment.id
-                && amount == event.received_amount
-                && prior_outcome == event.outcome
-            {
-                tx.commit().await?;
-                return Ok(());
-            }
-            if payment_id == payment.id {
-                sqlx::query("INSERT INTO payment_provider_events (payment_id, provider, payload_hash, amount_received, outcome) VALUES ($1, $2, $3, $4, 'review') ON CONFLICT DO NOTHING")
-                    .bind(payment.id).bind(provider).bind(&event.payload_hash).bind(event.received_amount)
-                    .execute(&mut *tx).await?;
-                sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'conflicting_provider_callback', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-                    .bind(payment.id).execute(&mut *tx).await?;
-                tx.commit().await?;
-                return Ok(());
-            }
-            sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_transaction_reused', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-                .bind(payment.id).execute(&mut *tx).await?;
-            tx.commit().await?;
-            return Ok(());
-        }
-    }
-
-    let settled_txn_id = (event.outcome == "paid"
-        && event.received_amount == i64::from(payment.amount))
-    .then_some(event.provider_txn_id.as_deref())
-    .flatten();
-    let inserted: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO payment_provider_events (payment_id, provider, provider_txn_id, reported_txn_id, payload_hash, amount_received, outcome) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING RETURNING id"
-    ).bind(payment.id).bind(provider).bind(settled_txn_id).bind(&event.provider_txn_id)
-        .bind(&event.payload_hash).bind(event.received_amount).bind(event.outcome)
-        .fetch_optional(&mut *tx).await?;
-    if inserted.is_none() {
-        // Another transaction may have claimed this PSP transaction ID after
-        // the checks above. Freeze this payment and preserve the observed
-        // transaction in the review ledger instead of rolling back into a retry.
-        sqlx::query("INSERT INTO payment_provider_events (payment_id, provider, reported_txn_id, payload_hash, amount_received, outcome) VALUES ($1, $2, $3, $4, $5, 'review') ON CONFLICT DO NOTHING")
-            .bind(payment.id).bind(provider).bind(&event.provider_txn_id).bind(&event.payload_hash).bind(event.received_amount)
-            .execute(&mut *tx).await?;
-        sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_transaction_reused', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-            .bind(payment.id).execute(&mut *tx).await?;
+    // Replayed signed observations are acknowledged without mutating state.
+    let seen: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM payment_provider_events WHERE provider = $1 AND payload_hash = $2 AND payment_id = $3)",
+    ).bind(provider).bind(&event.payload_hash).bind(payment.id).fetch_one(&mut *tx).await?;
+    if seen {
         tx.commit().await?;
         return Ok(());
     }
 
+    // In-progress events do not claim a transaction or release a reservation.
+    // Later final callbacks may legitimately carry the same PSP transaction ID.
+    if event.outcome == "processing" {
+        record_provider_event(&mut tx, provider, &payment, &event).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    let mut anomaly = None;
+    if let Some(txn_id) = &event.provider_txn_id {
+        sqlx::query("INSERT INTO payment_provider_transactions (provider, transaction_id, payment_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+            .bind(provider).bind(txn_id).bind(payment.id).execute(&mut *tx).await?;
+        let owner: Uuid = sqlx::query_scalar("SELECT payment_id FROM payment_provider_transactions WHERE provider = $1 AND transaction_id = $2")
+            .bind(provider).bind(txn_id).fetch_one(&mut *tx).await?;
+        if owner != payment.id {
+            anomaly = Some("provider_transaction_reused");
+        }
+        let contradictory: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payment_provider_events WHERE payment_id = $1 AND reported_txn_id = $2 AND outcome <> 'processing' AND (amount_received <> $3 OR outcome <> $4))",
+        ).bind(payment.id).bind(txn_id).bind(event.received_amount).bind(event.outcome)
+            .fetch_one(&mut *tx).await?;
+        if contradictory {
+            anomaly = Some("conflicting_provider_callback");
+        }
+    }
+    record_provider_event(&mut tx, provider, &payment, &event).await?;
+    if let Some(reason) = anomaly {
+        flag_payment_for_reconciliation(&mut tx, &payment, reason).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    let recoverable = payment.status == PaymentStatus::Disputed
+        && matches!(
+            payment.dispute_reason.as_deref(),
+            Some("provider_creation_uncertain" | "awaiting_provider_status")
+        );
     match (payment.status, event.outcome) {
-        (PaymentStatus::Paid, "paid") if payment.provider_txn_id == event.provider_txn_id => {}
-        (PaymentStatus::Paid, "failed") => {}
-        (PaymentStatus::Paid, "review") => {
-            sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_review' WHERE id = $1")
-                .bind(payment.id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        (PaymentStatus::Pending, "failed") => {
-            sqlx::query("UPDATE payments SET status = 'expired', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-                .bind(payment.id).execute(&mut *tx).await?;
-        }
-        (PaymentStatus::Pending, "paid")
-            if event.received_amount == i64::from(payment.amount)
-                && event.provider_txn_id.is_some() =>
+        (PaymentStatus::Pending, "paid" | "failed")
+        | (PaymentStatus::Disputed, "paid" | "failed")
+            if payment.status == PaymentStatus::Pending || recoverable =>
         {
-            sqlx::query("UPDATE payments SET status = 'paid', provider_txn_id = $2, paid_at = now(), provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-                .bind(payment.id).bind(event.provider_txn_id).execute(&mut *tx).await?;
-        }
-        (PaymentStatus::Pending, _)
-        | (PaymentStatus::Expired, "paid")
-        | (PaymentStatus::Refunded, "paid") => {
-            // Signed money/order mismatches and late captures are never marked
-            // paid or silently ignored. Freeze changes and require reconciliation.
-            let reason = if event.received_amount != i64::from(payment.amount) {
-                "amount_mismatch"
-            } else if payment.status == PaymentStatus::Pending {
-                "provider_review"
+            if event.received_amount != i64::from(payment.amount) {
+                flag_payment_for_reconciliation(&mut tx, &payment, "amount_mismatch").await?;
+            } else if event.outcome == "paid" && event.provider_txn_id.is_some() {
+                // Recovery is safe only if no newer collectible attempt exists.
+                let other: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND user_id = (SELECT user_id FROM payments WHERE id = $2) AND id <> $2 AND (status IN ('pending', 'paid', 'disputed') OR dispute_reason IS NOT NULL))",
+                ).bind(game_id).bind(payment.id).fetch_one(&mut *tx).await?;
+                if other {
+                    flag_payment_for_reconciliation(&mut tx, &payment, "late_capture").await?;
+                } else {
+                    sqlx::query("UPDATE payments SET status = 'paid', provider_txn_id = $2, paid_at = now(), dispute_reason = NULL, provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
+                        .bind(payment.id).bind(&event.provider_txn_id).execute(&mut *tx).await?;
+                }
+            } else if event.outcome == "failed" {
+                sqlx::query("UPDATE payments SET status = 'expired', dispute_reason = NULL, provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
+                    .bind(payment.id).execute(&mut *tx).await?;
             } else {
-                "late_capture"
-            };
-            sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = $2, provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
-                .bind(payment.id).bind(reason).execute(&mut *tx).await?;
+                flag_payment_for_reconciliation(&mut tx, &payment, "provider_review").await?;
+            }
         }
-        (PaymentStatus::Disputed, _)
-        | (PaymentStatus::Expired, _)
-        | (PaymentStatus::Refunded, _) => {}
-        (PaymentStatus::Paid, "paid") => {
-            sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_review' WHERE id = $1")
-                .bind(payment.id)
-                .execute(&mut *tx)
-                .await?;
+        (PaymentStatus::Paid, "paid")
+            if payment.provider_txn_id == event.provider_txn_id
+                && event.received_amount == i64::from(payment.amount) => {}
+        (PaymentStatus::Paid, "failed") => {}
+        (PaymentStatus::Expired | PaymentStatus::Refunded, "paid" | "review") => {
+            flag_payment_for_reconciliation(&mut tx, &payment, "late_capture").await?;
         }
-        (PaymentStatus::Paid, _) => {}
+        (PaymentStatus::Disputed, _) => {}
+        (_, "review") | (PaymentStatus::Paid, "paid") => {
+            flag_payment_for_reconciliation(&mut tx, &payment, "provider_review").await?;
+        }
+        _ => {}
     }
     tx.commit().await?;
+    Ok(())
+}
+
+async fn record_provider_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    provider: PaymentProvider,
+    payment: &Reservation,
+    event: &VerifiedProviderEvent<'_>,
+) -> AppResult<()> {
+    sqlx::query("INSERT INTO payment_provider_events (payment_id, provider, provider_txn_id, reported_txn_id, payload_hash, amount_received, outcome) VALUES ($1, $2, $3, $3, $4, $5, $6) ON CONFLICT DO NOTHING")
+        .bind(payment.id).bind(provider).bind(&event.provider_txn_id).bind(&event.payload_hash)
+        .bind(event.received_amount).bind(event.outcome).execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Historical disputes coexist with replacement attempts. Billing checks every
+/// dispute for the game, and only pending/paid rows occupy the collectible slot.
+async fn flag_payment_for_reconciliation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    payment: &Reservation,
+    reason: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = $2, provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1")
+        .bind(payment.id).bind(reason).execute(&mut **tx).await?;
     Ok(())
 }

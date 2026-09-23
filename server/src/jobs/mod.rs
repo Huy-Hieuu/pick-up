@@ -25,32 +25,35 @@ pub async fn start_workers(
         email_settings,
         cancel.clone(),
     ));
-    let payment_worker = tokio::spawn(run_payment_expiry_worker(state.pool.clone(), cancel));
+    let payment_worker = tokio::spawn(run_payment_expiry_worker(state.clone(), cancel));
 
     tracing::info!("Background workers started");
 
     Ok(vec![lobby_worker, email_worker, payment_worker])
 }
 
-async fn run_payment_expiry_worker(pool: sqlx::PgPool, cancel: CancellationToken) {
+async fn run_payment_expiry_worker(state: AppState, cancel: CancellationToken) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = interval.tick() => match crate::services::PaymentService::expire_stale_pending(&pool).await {
-                Ok(expired) if expired > 0 => tracing::info!(expired, "Expired provider payment orders"),
-                Ok(_) => {},
-                Err(error) => tracing::error!(%error, "Payment expiry pass failed"),
+            _ = interval.tick() => {
+                let reconcile = async {
+                    crate::services::PaymentService::expire_stale_pending(&state.pool).await?;
+                    crate::services::PaymentService::reconcile_pending(&state.pool, &state.settings).await
+                };
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    result = reconcile => match result {
+                        Ok(resolved) if resolved > 0 => tracing::info!(resolved, "Reconciled provider orders"),
+                        Ok(_) => {},
+                        Err(error) => tracing::error!(%error, "Payment reconciliation pass failed"),
+                    }
+                }
             }
         }
     }
-}
-
-/// Placeholder: Poll pending payment status from providers.
-#[allow(dead_code)]
-async fn _job_payment_status_poll() {
-    // TODO
 }
 
 /// Placeholder: Release expired locked slots.

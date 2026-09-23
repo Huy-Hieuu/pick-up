@@ -85,7 +85,7 @@ The [avatar upload contract](docs/backend-uploads.md) documents the signed
 
 Remaining launch gates:
 
-- PSP sandbox acceptance, provider status-query reconciliation, refunds,
+- PSP sandbox acceptance for order creation/callbacks/status queries, refunds,
   chargebacks and real-credential rollout. Complete those checks before accepting
   real money.
 - Phone-number ownership verification and edge/WAF protection against

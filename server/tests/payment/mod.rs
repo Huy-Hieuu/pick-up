@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::{extract::State, routing::post, Json, Router};
 use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
@@ -26,6 +27,10 @@ struct MockPsp {
     requests: Arc<Mutex<Vec<(String, Value)>>>,
     momo_result_code: Arc<std::sync::atomic::AtomicI32>,
     momo_transport_failure: Arc<std::sync::atomic::AtomicBool>,
+    zalopay_return_code: Arc<std::sync::atomic::AtomicI32>,
+    zalopay_sub_return_code: Arc<std::sync::atomic::AtomicI32>,
+    zalopay_transport_failure: Arc<std::sync::atomic::AtomicBool>,
+    query_response: Arc<Mutex<Option<Value>>>,
     settle_momo_before_response: Arc<Mutex<Option<pickup_server::state::AppState>>>,
 }
 
@@ -84,9 +89,43 @@ async fn momo(State(mock): State<MockPsp>, Json(body): Json<Value>) -> (StatusCo
     )
 }
 
-async fn zalopay(State(mock): State<MockPsp>, Json(body): Json<Value>) -> Json<Value> {
+async fn zalopay(State(mock): State<MockPsp>, Json(body): Json<Value>) -> axum::response::Response {
     mock.requests.lock().unwrap().push(("zalopay".into(), body));
-    Json(json!({"return_code": 1, "order_url": "https://sbgateway.zalopay.vn/order?token=test"}))
+    if mock
+        .zalopay_transport_failure
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return (StatusCode::BAD_GATEWAY, Json(json!({}))).into_response();
+    }
+    let return_code = mock
+        .zalopay_return_code
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let sub_return_code = mock
+        .zalopay_sub_return_code
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let return_code = if return_code == 0 { 1 } else { return_code };
+    Json(json!({
+        "return_code": return_code,
+        "sub_return_code": sub_return_code,
+        "order_url": if return_code == 1 { Some("https://sbgateway.zalopay.vn/order?token=test") } else { None }
+    })).into_response()
+}
+
+async fn query_status(State(mock): State<MockPsp>, Json(body): Json<Value>) -> Json<Value> {
+    mock.requests
+        .lock()
+        .unwrap()
+        .push(("query".into(), body.clone()));
+    if let Some(response) = mock.query_response.lock().unwrap().clone() {
+        let mut response = response;
+        if body.get("partnerCode").is_some() {
+            response["partnerCode"] = body["partnerCode"].clone();
+            response["requestId"] = body["requestId"].clone();
+            response["orderId"] = body["orderId"].clone();
+        }
+        return Json(response);
+    }
+    Json(json!({"return_code": 3, "is_processing": true}))
 }
 
 struct ProviderServer {
@@ -104,6 +143,7 @@ impl ProviderServer {
         let app = Router::new()
             .route("/momo", post(momo))
             .route("/zalopay", post(zalopay))
+            .route("/query", post(query_status))
             .with_state(mock.clone());
         let shutdown = tokio_util::sync::CancellationToken::new();
         let cancel = shutdown.clone();
@@ -414,7 +454,7 @@ async fn failed_orders_expire_retries_create_new_rows_and_stale_orders_expire(po
         &payment.id.simple().to_string(),
         i64::from(payment.amount),
         0,
-        1,
+        1006,
     );
     PaymentService::handle_momo_webhook(&pool, &state.settings, &callback.to_string())
         .await
@@ -438,9 +478,20 @@ async fn failed_orders_expire_retries_create_new_rows_and_stale_orders_expire(po
         PaymentService::expire_stale_pending(&pool).await.unwrap(),
         1
     );
+    let blocked: PaymentStatus = sqlx::query_scalar("SELECT status FROM payments WHERE id = $1")
+        .bind(next.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blocked, PaymentStatus::Disputed);
+    *psp.mock.query_response.lock().unwrap() =
+        Some(json!({"resultCode": 1005, "amount": next.amount}));
+    PaymentService::reconcile_pending(&pool, &state.settings)
+        .await
+        .unwrap();
     psp.mock
         .momo_result_code
-        .store(7, std::sync::atomic::Ordering::SeqCst);
+        .store(20, std::sync::atomic::Ordering::SeqCst);
     assert!(matches!(
         initiate(&state, game, creator, PaymentProvider::Momo).await,
         Err(AppError::PaymentRejected)
@@ -455,6 +506,164 @@ async fn failed_orders_expire_retries_create_new_rows_and_stale_orders_expire(po
         .await
         .unwrap();
     assert_ne!(final_attempt.id, next.id);
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn zalopay_duplicate_order_response_freezes_the_original_reservation(pool: PgPool) {
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let game = game(&pool, creator, 3).await;
+    psp.mock
+        .zalopay_transport_failure
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        initiate(&state, game, creator, PaymentProvider::Zalopay).await,
+        Err(AppError::PaymentGateway)
+    ));
+
+    let (first_id, first_order_id): (Uuid, String) = sqlx::query_as(
+        "SELECT id, provider_order_id FROM payments WHERE game_id = $1 AND user_id = $2",
+    )
+    .bind(game)
+    .bind(creator)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    psp.mock
+        .zalopay_transport_failure
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    psp.mock
+        .zalopay_return_code
+        .store(2, std::sync::atomic::Ordering::SeqCst);
+    psp.mock
+        .zalopay_sub_return_code
+        .store(-68, std::sync::atomic::Ordering::SeqCst);
+    sqlx::query("UPDATE payments SET provider_create_claim_until = now() - interval '1 second' WHERE id = $1")
+        .bind(first_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        initiate(&state, game, creator, PaymentProvider::Zalopay).await,
+        Err(AppError::PaymentOrderUncertain)
+    ));
+    let (status, reason, claim_until): (
+        PaymentStatus,
+        Option<String>,
+        Option<chrono::DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "SELECT status, dispute_reason, provider_create_claim_until FROM payments WHERE id = $1",
+    )
+    .bind(first_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, PaymentStatus::Disputed);
+    assert_eq!(reason.as_deref(), Some("provider_creation_uncertain"));
+    assert!(claim_until.is_none());
+    assert!(matches!(
+        initiate(&state, game, creator, PaymentProvider::Zalopay).await,
+        Err(AppError::Conflict(_))
+    ));
+    assert_eq!(
+        psp.mock.requests("zalopay")[1]["app_trans_id"],
+        first_order_id
+    );
+    let order_ids = psp
+        .mock
+        .requests("zalopay")
+        .into_iter()
+        .map(|request| request["app_trans_id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(order_ids, vec![first_order_id.clone(), first_order_id]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM payments WHERE game_id = $1")
+            .bind(game)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn late_zalopay_capture_is_recorded_when_a_replacement_is_pending(pool: PgPool) {
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let game = game(&pool, creator, 3).await;
+    let original = initiate(&state, game, creator, PaymentProvider::Zalopay)
+        .await
+        .unwrap();
+    let original_request = psp.mock.requests("zalopay")[0].clone();
+    sqlx::query("UPDATE payments SET status = 'expired', expires_at = now() - interval '1 second' WHERE id = $1")
+        .bind(original.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let replacement = initiate(&state, game, creator, PaymentProvider::Zalopay)
+        .await
+        .unwrap();
+    assert_ne!(replacement.id, original.id);
+
+    let data = json!({
+        "app_id": state.settings.zalopay.app_id.parse::<i64>().unwrap(),
+        "app_trans_id": original_request["app_trans_id"],
+        "app_time": original_request["app_time"],
+        "server_time": Utc::now().timestamp_millis(),
+        "amount": original.amount,
+        "zp_trans_id": 9_901_234_i64,
+    })
+    .to_string();
+    let callback = json!({
+        "data": data,
+        "mac": signature(&state.settings.zalopay.key2, &data),
+        "type": 1,
+    });
+    let app = build_router(state);
+    let (status, response) =
+        super::call(&app, "POST", "/webhooks/zalopay", callback.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["return_code"], 1);
+    assert_eq!(
+        super::call(&app, "POST", "/webhooks/zalopay", callback, None)
+            .await
+            .0,
+        StatusCode::OK,
+        "an exact callback replay remains idempotent"
+    );
+
+    let (old_status, old_reason): (PaymentStatus, Option<String>) =
+        sqlx::query_as("SELECT status, dispute_reason FROM payments WHERE id = $1")
+            .bind(original.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(old_status, PaymentStatus::Disputed);
+    assert_eq!(old_reason.as_deref(), Some("late_capture"));
+    let new_status: PaymentStatus = sqlx::query_scalar("SELECT status FROM payments WHERE id = $1")
+        .bind(replacement.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(new_status, PaymentStatus::Pending);
+    let event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM payment_provider_events WHERE payment_id = $1 AND provider_txn_id = '9901234'",
+    )
+    .bind(original.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 1);
+    assert!(
+        pickup_server::services::BillSplitService::calculate(&pool, game)
+            .await
+            .is_err()
+    );
 }
 
 #[sqlx::test]
@@ -603,12 +812,14 @@ async fn one_provider_transaction_cannot_settle_two_concurrent_orders(pool: PgPo
     assert_eq!(statuses, vec![PaymentStatus::Paid, PaymentStatus::Disputed]);
     assert_eq!(sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM payment_provider_events WHERE provider = 'momo' AND (provider_txn_id = '880001' OR reported_txn_id = '880001')"
+    ).fetch_one(&pool).await.unwrap(), 2);
+    assert_eq!(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM payment_provider_transactions WHERE provider = 'momo' AND transaction_id = '880001'"
     ).fetch_one(&pool).await.unwrap(), 1);
-    let disputed_id = if statuses[0] == PaymentStatus::Paid {
-        payment_b.id
-    } else {
-        payment_a.id
-    };
+    let disputed_id: Uuid = sqlx::query_scalar("SELECT id FROM payments WHERE status = 'disputed'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     let reason: Option<String> =
         sqlx::query_scalar("SELECT dispute_reason FROM payments WHERE id = $1")
             .bind(disputed_id)
@@ -684,4 +895,169 @@ async fn zalopay_callback_mac_settles_once_and_conflicting_capture_is_disputed(p
         pickup_server::services::BillSplitService::calculate(&pool, game).await,
         Err(AppError::Conflict(_))
     ));
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn provider_queries_recover_lost_callbacks_and_sign_the_requests(pool: PgPool) {
+    for provider in [PaymentProvider::Momo, PaymentProvider::Zalopay] {
+        let psp = ProviderServer::start().await;
+        let state = api(pool.clone(), &psp).await;
+        let creator = user(&pool, "Query creator").await;
+        let game_id = game(&pool, creator, 3).await;
+        let order = initiate(&state, game_id, creator, provider).await.unwrap();
+        sqlx::query("UPDATE payments SET expires_at = now() - interval '1 second' WHERE id = $1")
+            .bind(order.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        PaymentService::expire_stale_pending(&pool).await.unwrap();
+        let txn = if provider == PaymentProvider::Momo {
+            1234001
+        } else {
+            1234002
+        };
+        *psp.mock.query_response.lock().unwrap() = Some(match provider {
+            PaymentProvider::Momo => {
+                json!({"resultCode": 0, "amount": order.amount, "transId": txn})
+            }
+            PaymentProvider::Zalopay => {
+                json!({"return_code": 1, "is_processing": false, "amount": order.amount, "zp_trans_id": txn})
+            }
+        });
+        assert_eq!(
+            PaymentService::reconcile_pending(&pool, &state.settings)
+                .await
+                .unwrap(),
+            1
+        );
+        let (status, reason, paid_at): (
+            PaymentStatus,
+            Option<String>,
+            Option<chrono::DateTime<Utc>>,
+        ) = sqlx::query_as("SELECT status, dispute_reason, paid_at FROM payments WHERE id = $1")
+            .bind(order.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, PaymentStatus::Paid);
+        assert!(reason.is_none());
+        assert!(paid_at.is_some());
+        let request = psp.mock.requests("query").pop().unwrap();
+        match provider {
+            PaymentProvider::Momo => {
+                let raw = format!(
+                    "accessKey={}&orderId={}&partnerCode={}&requestId={}",
+                    state.settings.momo.access_key,
+                    request["orderId"].as_str().unwrap(),
+                    request["partnerCode"].as_str().unwrap(),
+                    request["requestId"].as_str().unwrap()
+                );
+                assert_eq!(
+                    request["signature"],
+                    signature(&state.settings.momo.secret_key, &raw)
+                );
+            }
+            PaymentProvider::Zalopay => {
+                let raw = format!(
+                    "{}|{}|{}",
+                    state.settings.zalopay.app_id,
+                    request["app_trans_id"].as_str().unwrap(),
+                    state.settings.zalopay.key1
+                );
+                assert_eq!(
+                    request["mac"],
+                    signature(&state.settings.zalopay.key1, &raw)
+                );
+            }
+        }
+        assert_eq!(
+            PaymentService::reconcile_pending(&pool, &state.settings)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn unresolved_query_never_unlocks_a_charge_and_workers_claim_once(pool: PgPool) {
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let game_id = game(&pool, creator, 3).await;
+    let order = initiate(&state, game_id, creator, PaymentProvider::Zalopay)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE payments SET expires_at = now() - interval '1 second' WHERE id = $1")
+        .bind(order.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        initiate(&state, game_id, creator, PaymentProvider::Zalopay).await,
+        Err(AppError::PaymentOrderUncertain)
+    ));
+    let (a, b) = tokio::join!(
+        PaymentService::reconcile_pending(&pool, &state.settings),
+        PaymentService::reconcile_pending(&pool, &state.settings)
+    );
+    assert_eq!(a.unwrap() + b.unwrap(), 0);
+    assert_eq!(psp.mock.requests("query").len(), 1);
+    assert!(initiate(&state, game_id, creator, PaymentProvider::Zalopay)
+        .await
+        .is_err());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM payments WHERE game_id = $1")
+        .bind(game_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    sqlx::query("UPDATE payments SET reconcile_after = now() WHERE id = $1")
+        .bind(order.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    *psp.mock.query_response.lock().unwrap() =
+        Some(json!({"return_code": 2, "sub_return_code": -54, "is_processing": false}));
+    assert_eq!(
+        PaymentService::reconcile_pending(&pool, &state.settings)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(initiate(&state, game_id, creator, PaymentProvider::Zalopay)
+        .await
+        .is_ok());
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn processing_callback_can_transition_to_paid_with_the_same_transaction(pool: PgPool) {
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let game_id = game(&pool, creator, 3).await;
+    let order = initiate(&state, game_id, creator, PaymentProvider::Momo)
+        .await
+        .unwrap();
+    for code in [7002, 0, 0] {
+        let callback = momo_callback(
+            &state.settings,
+            &order.id.simple().to_string(),
+            i64::from(order.amount),
+            76543,
+            code,
+        );
+        PaymentService::handle_momo_webhook(&pool, &state.settings, &callback.to_string())
+            .await
+            .unwrap();
+    }
+    let status: PaymentStatus = sqlx::query_scalar("SELECT status FROM payments WHERE id = $1")
+        .bind(order.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, PaymentStatus::Paid);
 }

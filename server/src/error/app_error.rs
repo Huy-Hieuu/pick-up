@@ -44,6 +44,9 @@ pub enum AppError {
     #[error("Payment provider rejected the order")]
     PaymentRejected,
 
+    #[error("Payment provider order outcome is uncertain")]
+    PaymentOrderUncertain,
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 
@@ -98,6 +101,11 @@ impl IntoResponse for AppError {
                 StatusCode::BAD_GATEWAY,
                 "PAYMENT_REJECTED",
                 "Payment order could not be created".into(),
+            ),
+            AppError::PaymentOrderUncertain => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_ORDER_UNCERTAIN",
+                "Payment outcome needs reconciliation; do not start another payment".into(),
             ),
             AppError::Internal(err) => {
                 tracing::error!("Internal error: {err:#}");

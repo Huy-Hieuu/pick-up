@@ -24,6 +24,7 @@ pub(super) struct Reservation {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub provider_create_claim: Option<uuid::Uuid>,
     pub provider_create_claim_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub dispute_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +150,16 @@ struct MomoCreateResponse {
     pay_url: Option<String>,
 }
 
+fn momo_result_is_uncertain(result_code: i32) -> bool {
+    // MoMo documents these as in-progress, duplicate, or otherwise unresolved
+    // outcomes. Retrying with a new order can charge the customer twice.
+    result_code != 0
+        && !matches!(
+            result_code,
+            20 | 21 | 22 | 98 | 1001..=1007 | 1017 | 1026 | 4001 | 4002 | 4100
+        )
+}
+
 pub(super) async fn create_momo_order(
     settings: &Settings,
     reservation: &Reservation,
@@ -181,6 +192,9 @@ pub(super) async fn create_momo_order(
     };
     let response: MomoCreateResponse = post_json(&cfg.endpoint, &body).await?;
     if response.result_code != 0 {
+        if momo_result_is_uncertain(response.result_code) {
+            return Err(AppError::PaymentOrderUncertain);
+        }
         return Err(AppError::PaymentRejected);
     }
     if response.partner_code != cfg.partner_code
@@ -218,7 +232,18 @@ struct ZaloCreateRequest<'a> {
 #[derive(Deserialize)]
 struct ZaloCreateResponse {
     return_code: i32,
+    #[serde(default)]
+    sub_return_code: Option<i32>,
     order_url: Option<String>,
+}
+
+fn zalopay_result_is_uncertain(response: &ZaloCreateResponse) -> bool {
+    response.return_code != 1
+        && !(response.return_code == 2
+            && matches!(
+                response.sub_return_code,
+                Some(-2 | -53 | -401 | -402 | -403 | -405)
+            ))
 }
 
 pub(super) async fn create_zalopay_order(
@@ -255,6 +280,9 @@ pub(super) async fn create_zalopay_order(
     };
     let response: ZaloCreateResponse = post_json(&cfg.endpoint, &body).await?;
     if response.return_code != 1 {
+        if zalopay_result_is_uncertain(&response) {
+            return Err(AppError::PaymentOrderUncertain);
+        }
         return Err(AppError::PaymentRejected);
     }
     validate_payment_url(
@@ -270,9 +298,17 @@ async fn post_json<T: Serialize, R: for<'de> Deserialize<'de>>(
     endpoint: &str,
     body: &T,
 ) -> AppResult<R> {
+    post_json_with_timeout(endpoint, body, 10).await
+}
+
+async fn post_json_with_timeout<T: Serialize, R: for<'de> Deserialize<'de>>(
+    endpoint: &str,
+    body: &T,
+    timeout_seconds: u64,
+) -> AppResult<R> {
     let endpoint = validate_endpoint(endpoint)?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(timeout_seconds))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| AppError::PaymentGateway)?;
@@ -288,10 +324,130 @@ async fn post_json<T: Serialize, R: for<'de> Deserialize<'de>>(
     if !response.status().is_success() {
         return Err(AppError::PaymentGateway);
     }
-    response.json().await.map_err(|error| {
-        tracing::warn!(%error, "Invalid payment provider response");
-        AppError::PaymentGateway
-    })
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| AppError::PaymentGateway)?
+    {
+        if bytes.len() + chunk.len() > 64 * 1024 {
+            return Err(AppError::PaymentGateway);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| AppError::PaymentGateway)
+}
+
+pub(super) struct OrderStatus {
+    pub amount: i64,
+    pub transaction_id: Option<String>,
+    pub outcome: &'static str,
+}
+
+pub(super) fn momo_terminal_failure(code: i32) -> bool {
+    matches!(code, 1001..=1007 | 1017 | 1026 | 4001 | 4002 | 4100)
+}
+
+/// Query URLs are derived from the configured create endpoint on the same
+/// trusted origin; defaults resolve to each provider's /query API.
+pub(super) async fn query_order(
+    settings: &Settings,
+    payment: &Reservation,
+) -> AppResult<OrderStatus> {
+    let cfg = credentials(settings, payment.provider)?;
+    let endpoint = validate_endpoint(&cfg.endpoint)?
+        .join("query")
+        .map_err(|_| AppError::PaymentGateway)?;
+    match payment.provider {
+        PaymentProvider::Momo => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct QueryResponse {
+                partner_code: String,
+                order_id: String,
+                request_id: String,
+                result_code: i32,
+                amount: Option<i64>,
+                trans_id: Option<i64>,
+            }
+            let request_id = uuid::Uuid::new_v4().simple().to_string();
+            let raw = format!(
+                "accessKey={}&orderId={}&partnerCode={}&requestId={}",
+                settings.momo.access_key, payment.provider_order_id, cfg.partner_code, request_id
+            );
+            let body = serde_json::json!({"partnerCode": cfg.partner_code,
+                "orderId": payment.provider_order_id, "requestId": request_id,
+                "lang": "en", "signature": hmac_hex(&cfg.key, &raw)?});
+            let response: QueryResponse =
+                post_json_with_timeout(endpoint.as_str(), &body, 35).await?;
+            if response.partner_code != cfg.partner_code
+                || response.order_id != payment.provider_order_id
+                || response.request_id != request_id
+            {
+                return Err(AppError::PaymentGateway);
+            }
+            let txn = response
+                .trans_id
+                .filter(|id| *id > 0)
+                .map(|id| id.to_string());
+            let outcome = if response.result_code == 0 && txn.is_some() && response.amount.is_some()
+            {
+                "paid"
+            } else if momo_terminal_failure(response.result_code) {
+                "failed"
+            } else {
+                "processing"
+            };
+            Ok(OrderStatus {
+                amount: response.amount.unwrap_or(i64::from(payment.amount)),
+                transaction_id: txn,
+                outcome,
+            })
+        }
+        PaymentProvider::Zalopay => {
+            #[derive(Deserialize)]
+            struct QueryResponse {
+                return_code: i32,
+                sub_return_code: Option<i32>,
+                is_processing: Option<bool>,
+                amount: Option<i64>,
+                zp_trans_id: Option<i64>,
+            }
+            let app_id = cfg
+                .app_id
+                .parse::<i64>()
+                .map_err(|_| AppError::PaymentGateway)?;
+            let raw = format!("{}|{}|{}", app_id, payment.provider_order_id, cfg.key);
+            let body = serde_json::json!({"app_id": app_id, "app_trans_id": payment.provider_order_id,
+                "mac": hmac_hex(&cfg.key, &raw)?});
+            let response: QueryResponse =
+                post_json_with_timeout(endpoint.as_str(), &body, 35).await?;
+            let txn = response
+                .zp_trans_id
+                .filter(|id| *id > 0)
+                .map(|id| id.to_string());
+            let outcome = if response.return_code == 1
+                && response.is_processing == Some(false)
+                && txn.is_some()
+                && response.amount.is_some()
+            {
+                "paid"
+            } else if response.return_code == 2
+                && response.sub_return_code == Some(-54)
+                && response.is_processing == Some(false)
+            {
+                "failed"
+            } else {
+                "processing"
+            };
+            Ok(OrderStatus {
+                amount: response.amount.unwrap_or(i64::from(payment.amount)),
+                transaction_id: txn,
+                outcome,
+            })
+        }
+    }
 }
 
 fn validate_payment_url(value: &str, provider_domain: &str) -> AppResult<String> {
@@ -321,6 +477,32 @@ pub(super) fn momo_signature_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uncertain_provider_create_results_do_not_release_the_order() {
+        for result_code in [40, 41, 43, 7000, 7002, 9000] {
+            assert!(momo_result_is_uncertain(result_code));
+        }
+        assert!(!momo_result_is_uncertain(0));
+        assert!(!momo_result_is_uncertain(20));
+        assert!(momo_result_is_uncertain(7));
+
+        assert!(zalopay_result_is_uncertain(&ZaloCreateResponse {
+            return_code: 3,
+            sub_return_code: None,
+            order_url: None,
+        }));
+        assert!(zalopay_result_is_uncertain(&ZaloCreateResponse {
+            return_code: 2,
+            sub_return_code: Some(-68),
+            order_url: None,
+        }));
+        assert!(!zalopay_result_is_uncertain(&ZaloCreateResponse {
+            return_code: 2,
+            sub_return_code: Some(-53),
+            order_url: None,
+        }));
+    }
 
     #[test]
     fn hmac_sha256_matches_rfc4231_and_rejects_modified_signatures() {

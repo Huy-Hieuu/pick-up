@@ -60,7 +60,7 @@ impl BillSplitService {
             return Err(AppError::Conflict("Cancelled games are not payable".into()));
         }
         let disputed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status = 'disputed')",
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status = 'disputed' OR dispute_reason IS NOT NULL))",
         )
         .bind(game_id)
         .fetch_one(&mut *conn)

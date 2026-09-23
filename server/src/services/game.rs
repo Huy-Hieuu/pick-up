@@ -237,7 +237,7 @@ impl GameService {
             return Err(AppError::Conflict("Game is not open for joining".into()));
         }
         let pending_payment: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'disputed'))"
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'disputed') OR dispute_reason IS NOT NULL))"
         ).bind(game_id).fetch_one(&mut *tx).await?;
         if pending_payment {
             return Err(AppError::Conflict(
@@ -309,7 +309,7 @@ impl GameService {
             )));
         }
         let pending_payment: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'disputed'))"
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'disputed') OR dispute_reason IS NOT NULL))"
         ).bind(game_id).fetch_one(&mut *tx).await?;
         if pending_payment {
             return Err(AppError::Conflict(
@@ -352,7 +352,7 @@ impl GameService {
             _ => {}
         }
 
-        let unsettled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'paid', 'disputed'))")
+        let unsettled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'paid', 'disputed') OR dispute_reason IS NOT NULL))")
             .bind(game_id).fetch_one(&mut *tx).await?;
         if unsettled {
             return Err(AppError::Conflict(
