@@ -1,10 +1,6 @@
 use std::future::Future;
 
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-    response::IntoResponse,
-};
+use axum::{extract::FromRequestParts, http::request::Parts, response::IntoResponse};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -18,6 +14,9 @@ pub const AUDIENCE: &str = "pickup-app";
 /// JWT claims embedded in access and refresh tokens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
+    /// Persisted login session and unique token identity. Legacy tokens fail closed.
+    pub sid: uuid::Uuid,
+    pub jti: uuid::Uuid,
     /// Subject — the user's UUID as a string.
     pub sub: String,
     /// Token type: "access" or "refresh".
@@ -76,6 +75,7 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
             .and_then(|v| v.to_str().ok())
             .map(|h| h.to_string());
         let secret = state.settings.jwt.secret.clone();
+        let pool = state.pool.clone();
 
         async move {
             // Fast path: read Claims injected by require_auth middleware.
@@ -84,10 +84,11 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
             }
 
             // Fallback: decode JWT from header (for routes without auth middleware).
-            let auth_header = auth_header
-                .ok_or_else(|| {
-                    AuthRejection(AppError::Unauthorized("Missing Authorization header".into()))
-                })?;
+            let auth_header = auth_header.ok_or_else(|| {
+                AuthRejection(AppError::Unauthorized(
+                    "Missing Authorization header".into(),
+                ))
+            })?;
 
             let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
                 AuthRejection(AppError::Unauthorized(
@@ -95,27 +96,9 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
                 ))
             })?;
 
-            let mut validation = Validation::default();
-            validation.set_issuer(&[ISSUER]);
-            validation.set_audience(&[AUDIENCE]);
-
-            let claims = decode::<Claims>(
-                token,
-                &DecodingKey::from_secret(secret.as_bytes()),
-                &validation,
-            )
-            .map_err(|e| {
-                tracing::warn!("JWT decode failed: {e}");
-                AuthRejection(AppError::Unauthorized("Invalid or expired token".into()))
-            })?
-            .claims;
-
-            // Ensure this is an access token, not a refresh token.
-            if claims.typ != "access" {
-                return Err(AuthRejection(AppError::Unauthorized(
-                    "Invalid token type".into(),
-                )));
-            }
+            let claims = authenticate_access_token(&pool, token, &secret)
+                .await
+                .map_err(AuthRejection)?;
 
             Ok(Self { claims })
         }
@@ -127,11 +110,18 @@ impl FromRequestParts<crate::state::AppState> for AuthUser {
 /// Create a signed access token.
 pub fn create_access_token(
     user_id: uuid::Uuid,
+    session_id: uuid::Uuid,
     secret: &str,
     ttl_minutes: i64,
 ) -> anyhow::Result<String> {
     let now = Utc::now();
+    anyhow::ensure!(
+        (1..=60).contains(&ttl_minutes),
+        "Access TTL must be 1–60 minutes"
+    );
     let claims = Claims {
+        sid: session_id,
+        jti: uuid::Uuid::new_v4(),
         sub: user_id.to_string(),
         typ: "access".into(),
         iss: ISSUER.into(),
@@ -150,11 +140,18 @@ pub fn create_access_token(
 /// Create a signed refresh token.
 pub fn create_refresh_token(
     user_id: uuid::Uuid,
+    session_id: uuid::Uuid,
     secret: &str,
     ttl_days: i64,
 ) -> anyhow::Result<String> {
     let now = Utc::now();
+    anyhow::ensure!(
+        (1..=90).contains(&ttl_days),
+        "Refresh TTL must be 1–90 days"
+    );
     let claims = Claims {
+        sid: session_id,
+        jti: uuid::Uuid::new_v4(),
         sub: user_id.to_string(),
         typ: "refresh".into(),
         iss: ISSUER.into(),
@@ -170,6 +167,51 @@ pub fn create_refresh_token(
     .map_err(Into::into)
 }
 
+pub fn decode_token(token: &str, secret: &str, token_type: &str) -> Result<Claims, AppError> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[ISSUER]);
+    validation.set_audience(&[AUDIENCE]);
+    validation.leeway = 0;
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|_| AppError::Unauthorized("Invalid or expired token".into()))?
+    .claims;
+    if claims.typ != token_type
+        || uuid::Uuid::parse_str(&claims.sub).is_err()
+        || claims.sid.is_nil()
+        || claims.jti.is_nil()
+        || claims.exp <= Utc::now().timestamp()
+    {
+        return Err(AppError::Unauthorized("Invalid token".into()));
+    }
+    Ok(claims)
+}
+
+pub async fn authenticate_access_token(
+    pool: &sqlx::PgPool,
+    token: &str,
+    secret: &str,
+) -> Result<Claims, AppError> {
+    let claims = decode_token(token, secret, "access")?;
+    validate_session(pool, &claims).await?;
+    Ok(claims)
+}
+
+pub async fn validate_session(pool: &sqlx::PgPool, claims: &Claims) -> Result<(), AppError> {
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid token".into()))?;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM auth_sessions WHERE id = $1 AND user_id = $2 AND expires_at > now())"
+    ).bind(claims.sid).bind(user_id).fetch_one(pool).await?;
+    if !active || claims.exp <= Utc::now().timestamp() {
+        return Err(AppError::Unauthorized("Session expired or revoked".into()));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,8 +224,12 @@ mod tests {
         let mut validation = Validation::default();
         validation.set_issuer(&[ISSUER]);
         validation.set_audience(&[AUDIENCE]);
-        decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
-            .expect("Token should decode successfully")
+        decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &validation,
+        )
+        .expect("Token should decode successfully")
     }
 
     // ── Access token ──────────────────────────────────────────────
@@ -191,7 +237,7 @@ mod tests {
     #[test]
     fn access_token_contains_correct_claims() {
         let user_id = Uuid::new_v4();
-        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let token = create_access_token(user_id, Uuid::new_v4(), TEST_SECRET, 15).unwrap();
         let data = decode_token(&token, TEST_SECRET);
 
         assert_eq!(data.claims.sub, user_id.to_string());
@@ -203,7 +249,7 @@ mod tests {
     fn access_token_has_valid_expiry() {
         let user_id = Uuid::new_v4();
         let before = Utc::now().timestamp();
-        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let token = create_access_token(user_id, Uuid::new_v4(), TEST_SECRET, 15).unwrap();
         let after = Utc::now().timestamp();
         let data = decode_token(&token, TEST_SECRET);
 
@@ -218,7 +264,7 @@ mod tests {
     #[test]
     fn access_token_rejects_wrong_secret() {
         let user_id = Uuid::new_v4();
-        let token = create_access_token(user_id, TEST_SECRET, 15).unwrap();
+        let token = create_access_token(user_id, Uuid::new_v4(), TEST_SECRET, 15).unwrap();
 
         let result = decode::<Claims>(
             &token,
@@ -233,7 +279,7 @@ mod tests {
     #[test]
     fn refresh_token_contains_correct_type() {
         let user_id = Uuid::new_v4();
-        let token = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+        let token = create_refresh_token(user_id, Uuid::new_v4(), TEST_SECRET, 30).unwrap();
         let data = decode_token(&token, TEST_SECRET);
 
         assert_eq!(data.claims.typ, "refresh");
@@ -244,7 +290,7 @@ mod tests {
     fn refresh_token_expiry_is_in_days() {
         let user_id = Uuid::new_v4();
         let before = Utc::now().timestamp();
-        let token = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+        let token = create_refresh_token(user_id, Uuid::new_v4(), TEST_SECRET, 30).unwrap();
         let after = Utc::now().timestamp();
         let data = decode_token(&token, TEST_SECRET);
 
@@ -262,8 +308,8 @@ mod tests {
     #[test]
     fn access_and_refresh_tokens_have_different_types() {
         let user_id = Uuid::new_v4();
-        let access = create_access_token(user_id, TEST_SECRET, 15).unwrap();
-        let refresh = create_refresh_token(user_id, TEST_SECRET, 30).unwrap();
+        let access = create_access_token(user_id, Uuid::new_v4(), TEST_SECRET, 15).unwrap();
+        let refresh = create_refresh_token(user_id, Uuid::new_v4(), TEST_SECRET, 30).unwrap();
 
         let access_data = decode_token(&access, TEST_SECRET);
         let refresh_data = decode_token(&refresh, TEST_SECRET);
@@ -278,6 +324,8 @@ mod tests {
     fn auth_user_extracts_user_id() {
         let user_id = Uuid::new_v4();
         let claims = Claims {
+            sid: Uuid::new_v4(),
+            jti: Uuid::new_v4(),
             sub: user_id.to_string(),
             typ: "access".into(),
             iss: ISSUER.into(),
@@ -292,6 +340,8 @@ mod tests {
     #[test]
     fn auth_user_claims_accessor() {
         let claims = Claims {
+            sid: Uuid::new_v4(),
+            jti: Uuid::new_v4(),
             sub: Uuid::new_v4().to_string(),
             typ: "access".into(),
             iss: ISSUER.into(),

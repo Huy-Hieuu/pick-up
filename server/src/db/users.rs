@@ -16,9 +16,77 @@ pub async fn find_user_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Opti
     .await
 }
 
-pub async fn find_user_by_email_and_password(pool: &PgPool, email: &str) -> sqlx::Result<Option<UserRow>> {
+pub async fn email_is_verified(pool: &PgPool, email: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND email_verified)")
+        .bind(email)
+        .fetch_one(pool)
+        .await
+}
+
+pub async fn verify_user_email(
+    pool: &PgPool,
+    email: &str,
+    phone: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+) -> sqlx::Result<Option<UserRow>> {
+    let mut tx = pool.begin().await?;
+    let user = sqlx::query_as::<_, UserRow>(
+        r#"
+        UPDATE users SET email_verified = TRUE, password_hash = $2, phone = $3,
+            display_name = $4, avatar_url = $5, updated_at = now()
+        WHERE email = $1 AND email_verified = FALSE
+        RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
+    "#,
+    )
+    .bind(email)
+    .bind(password_hash)
+    .bind(phone)
+    .bind(display_name)
+    .bind(avatar_url)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(user) = &user {
+        sqlx::query("DELETE FROM auth_sessions WHERE user_id = $1")
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(user)
+}
+
+pub async fn create_verified_user(
+    pool: &PgPool,
+    phone: &str,
+    email: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+) -> sqlx::Result<UserRow> {
     sqlx::query_as::<_, UserRow>(
-        "SELECT id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at FROM users WHERE email = $1 AND password_hash IS NOT NULL",
+        r#"
+        INSERT INTO users (phone, email, password_hash, display_name, avatar_url, email_verified)
+        VALUES ($1, $2, $3, $4, $5, TRUE)
+        RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
+        "#,
+    )
+    .bind(phone)
+    .bind(email)
+    .bind(password_hash)
+    .bind(display_name)
+    .bind(avatar_url)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn find_user_by_email_and_password(
+    pool: &PgPool,
+    email: &str,
+) -> sqlx::Result<Option<UserRow>> {
+    sqlx::query_as::<_, UserRow>(
+        "SELECT id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at FROM users WHERE email = $1 AND password_hash IS NOT NULL AND email_verified",
     )
     .bind(email)
     .fetch_optional(pool)
@@ -32,9 +100,14 @@ pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Er
     Ok(password_hash.to_string())
 }
 
-pub fn verify_password(password: &str, password_hash: &str) -> Result<bool, argon2::password_hash::Error> {
+pub fn verify_password(
+    password: &str,
+    password_hash: &str,
+) -> Result<bool, argon2::password_hash::Error> {
     let parsed_hash = PasswordHash::new(password_hash)?;
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_ok())
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
 }
 
 pub async fn find_user_by_id(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<UserRow>> {
@@ -112,7 +185,11 @@ pub async fn update_user_profile_patch(
     .await
 }
 
-pub async fn update_password_hash(pool: &PgPool, user_id: Uuid, password_hash: &str) -> sqlx::Result<UserRow> {
+pub async fn update_password_hash(
+    pool: &PgPool,
+    user_id: Uuid,
+    password_hash: &str,
+) -> sqlx::Result<UserRow> {
     sqlx::query_as::<_, UserRow>(
         r#"
         UPDATE users
@@ -145,7 +222,10 @@ mod tests {
     fn hash_password_uses_random_salts() {
         let h1 = hash_password("samepassword").unwrap();
         let h2 = hash_password("samepassword").unwrap();
-        assert_ne!(h1, h2, "Same password must produce different hashes (random salt)");
+        assert_ne!(
+            h1, h2,
+            "Same password must produce different hashes (random salt)"
+        );
     }
 
     // ── verify_password ────────────────────────────────────────────

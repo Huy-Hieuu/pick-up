@@ -5,7 +5,7 @@ use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::models::court::SlotStatus;
 use crate::models::game::{
-    GameDetail, GameListResponse, GameListItem, GameRow, GameStatus, ListGamesQuery,
+    GameDetail, GameListItem, GameListResponse, GameRow, GameStatus, ListGamesQuery,
 };
 
 /// Game service.
@@ -18,10 +18,7 @@ pub struct GameService;
 
 impl GameService {
     /// List games with optional filters (sport type, status, date, geo radius).
-    pub async fn list_games(
-        pool: &PgPool,
-        query: ListGamesQuery,
-    ) -> AppResult<GameListResponse> {
+    pub async fn list_games(pool: &PgPool, query: ListGamesQuery) -> AppResult<GameListResponse> {
         // Require both lat and lng together, or neither.
         if query.lat.is_some() != query.lng.is_some() {
             return Err(AppError::BadRequest(
@@ -36,25 +33,44 @@ impl GameService {
             (Some(lat), Some(lng)) => {
                 let radius = query.radius_km.unwrap_or(10.0);
                 let rows = db::games::list_games_near_joined(
-                    pool, query.sport_type, query.status, query.date,
-                    lat, lng, radius, limit, offset,
+                    pool,
+                    query.sport_type,
+                    query.status,
+                    query.date,
+                    lat,
+                    lng,
+                    radius,
+                    limit,
+                    offset,
                 )
                 .await?;
                 let total = db::games::count_games_near_filtered(
-                    pool, query.sport_type, query.status, query.date,
-                    lat, lng, radius,
+                    pool,
+                    query.sport_type,
+                    query.status,
+                    query.date,
+                    lat,
+                    lng,
+                    radius,
                 )
                 .await?;
                 (rows, total)
             }
             _ => {
                 let rows = db::games::list_games_all_joined(
-                    pool, query.sport_type, query.status, query.date,
-                    limit, offset,
+                    pool,
+                    query.sport_type,
+                    query.status,
+                    query.date,
+                    limit,
+                    offset,
                 )
                 .await?;
                 let total = db::games::count_games_all_filtered(
-                    pool, query.sport_type, query.status, query.date,
+                    pool,
+                    query.sport_type,
+                    query.status,
+                    query.date,
                 )
                 .await?;
                 (rows, total)
@@ -92,20 +108,45 @@ impl GameService {
             ));
         }
 
+        // Fetch before opening a transaction so even a one-connection pool works.
+        let court = db::courts::find_court_by_id(pool, slot.court_id).await?;
+
         // 2. Begin tx: lock slot, re-validate, check uniqueness, insert game + player.
         let mut tx = pool.begin().await.map_err(AppError::Database)?;
 
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(creator_id)
+            .fetch_one(&mut *tx)
+            .await?;
         // Verify sport_type matches the court (court data is immutable).
-        let court = db::courts::find_court_by_id(pool, slot.court_id).await?;
         if court.sport_type != req.sport_type {
-            return Err(AppError::BadRequest(
-                format!("Game sport type ({:?}) does not match court sport type ({:?})",
-                    req.sport_type, court.sport_type)
-            ));
+            return Err(AppError::BadRequest(format!(
+                "Game sport type ({:?}) does not match court sport type ({:?})",
+                req.sport_type, court.sport_type
+            )));
         }
 
         let locked_slot =
             db::courts::find_slot_for_update(&mut tx, req.court_slot_id, slot.court_id).await?;
+
+        if locked_slot.start_time <= chrono::Utc::now() {
+            return Err(AppError::Conflict(
+                "Cannot create a game for a past slot".into(),
+            ));
+        }
+        if db::games::has_overlapping_game_tx(
+            &mut tx,
+            creator_id,
+            Uuid::nil(),
+            locked_slot.start_time,
+            locked_slot.end_time,
+        )
+        .await?
+        {
+            return Err(AppError::Conflict(
+                "You have another game at the same time".into(),
+            ));
+        }
 
         // Re-validate on locked row to prevent race.
         if locked_slot.status != SlotStatus::Booked {
@@ -175,20 +216,33 @@ impl GameService {
     /// Join a game. Uses SELECT FOR UPDATE on the game row to prevent
     /// race conditions (over-capacity, stale status).
     /// Also checks for overlapping game times.
-    pub async fn join_game(
-        pool: &PgPool,
-        game_id: Uuid,
-        user_id: Uuid,
-    ) -> AppResult<GameDetail> {
+    pub async fn join_game(pool: &PgPool, game_id: Uuid, user_id: Uuid) -> AppResult<GameDetail> {
         let mut tx = pool.begin().await.map_err(AppError::Database)?;
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
         // Fetch slot times inside the transaction for consistency.
         let slot = db::games::find_game_slot_tx(&mut tx, game_id).await?;
+        if slot.start_time <= chrono::Utc::now() {
+            return Err(AppError::Conflict(
+                "Cannot join a game that has started".into(),
+            ));
+        }
 
         // 1. Lock game row + re-read fresh status.
         let game = db::games::find_game_for_update(&mut tx, game_id).await?;
         if game.status != GameStatus::Open {
             return Err(AppError::Conflict("Game is not open for joining".into()));
+        }
+        let pending_payment: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'disputed') OR dispute_reason IS NOT NULL))"
+        ).bind(game_id).fetch_one(&mut *tx).await?;
+        if pending_payment {
+            return Err(AppError::Conflict(
+                "Player changes are locked while a payment is pending or disputed".into(),
+            ));
         }
 
         // 2. Check user is not already a player (inside tx).
@@ -204,9 +258,14 @@ impl GameService {
         }
 
         // 4. Check for overlapping game times.
-        let overlap =
-            db::games::has_overlapping_game_tx(&mut tx, user_id, game_id, slot.start_time, slot.end_time)
-                .await?;
+        let overlap = db::games::has_overlapping_game_tx(
+            &mut tx,
+            user_id,
+            game_id,
+            slot.start_time,
+            slot.end_time,
+        )
+        .await?;
         if overlap {
             return Err(AppError::Conflict(
                 "You have another game at the same time".into(),
@@ -243,14 +302,19 @@ impl GameService {
         // Lock game row + re-read fresh status inside tx.
         let game = db::games::find_game_for_update(&mut tx, game_id).await?;
 
-        if matches!(
-            game.status,
-            GameStatus::Cancelled | GameStatus::Completed
-        ) {
+        if matches!(game.status, GameStatus::Cancelled | GameStatus::Completed) {
             return Err(AppError::Conflict(format!(
                 "Cannot leave a {:?} game",
                 game.status
             )));
+        }
+        let pending_payment: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'disputed') OR dispute_reason IS NOT NULL))"
+        ).bind(game_id).fetch_one(&mut *tx).await?;
+        if pending_payment {
+            return Err(AppError::Conflict(
+                "Player changes are locked while a payment is pending or disputed".into(),
+            ));
         }
 
         // Check user is a member (inside tx). If not, remove_game_player
@@ -288,11 +352,20 @@ impl GameService {
             _ => {}
         }
 
+        let unsettled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND (status IN ('pending', 'paid', 'disputed') OR dispute_reason IS NOT NULL))")
+            .bind(game_id).fetch_one(&mut *tx).await?;
+        if unsettled {
+            return Err(AppError::Conflict(
+                "Payments must be reconciled before cancelling this game".into(),
+            ));
+        }
+
         // Remove all players from the game.
         db::games::remove_all_game_players(&mut tx, game_id).await?;
 
         // Release the court slot back to Available.
-        db::courts::update_slot_status(&mut tx, game.court_slot_id, SlotStatus::Available, None).await?;
+        db::courts::update_slot_status(&mut tx, game.court_slot_id, SlotStatus::Available, None)
+            .await?;
 
         db::games::set_game_status(&mut tx, game_id, GameStatus::Cancelled).await?;
         tx.commit().await.map_err(AppError::Database)?;

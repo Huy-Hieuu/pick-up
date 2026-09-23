@@ -92,10 +92,7 @@ pub async fn list_courts_all(
     .await
 }
 
-pub async fn count_courts_all(
-    pool: &PgPool,
-    sport_type: Option<SportType>,
-) -> sqlx::Result<i64> {
+pub async fn count_courts_all(pool: &PgPool, sport_type: Option<SportType>) -> sqlx::Result<i64> {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM courts WHERE ($1::sport_type IS NULL OR sport_type = $1)",
     )

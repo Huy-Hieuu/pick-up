@@ -227,7 +227,7 @@ pub async fn list_players_with_profile(
         LEFT JOIN LATERAL (
             SELECT status FROM payments
             WHERE game_id = gp.game_id AND user_id = gp.user_id
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY (status = 'paid') DESC, created_at DESC, id DESC LIMIT 1
         ) p ON true
         WHERE gp.game_id = $1
         ORDER BY gp.joined_at
@@ -276,12 +276,10 @@ pub async fn count_game_players_tx(
     conn: &mut sqlx::PgConnection,
     game_id: Uuid,
 ) -> sqlx::Result<i64> {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM game_players WHERE game_id = $1",
-    )
-    .bind(game_id)
-    .fetch_one(&mut *conn)
-    .await
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM game_players WHERE game_id = $1")
+        .bind(game_id)
+        .fetch_one(&mut *conn)
+        .await
 }
 
 pub async fn game_exists_for_slot_tx(
@@ -349,8 +347,9 @@ pub async fn insert_game(
     description: Option<&str>,
 ) -> sqlx::Result<GameRow> {
     sqlx::query_as::<_, GameRow>(
-        r#"INSERT INTO games (court_slot_id, creator_id, sport_type, max_players, description)
-           VALUES ($1, $2, $3, $4, $5)
+        r#"INSERT INTO games (court_slot_id, creator_id, sport_type, max_players, description, total_amount)
+           SELECT $1, $2, $3, $4, $5, c.price_per_slot
+           FROM court_slots s JOIN courts c ON c.id = s.court_id WHERE s.id = $1
            RETURNING id, court_slot_id, creator_id, sport_type, max_players, description, status, created_at"#,
     )
     .bind(court_slot_id)

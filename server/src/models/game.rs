@@ -5,8 +5,8 @@ use uuid::Uuid;
 use validator::Validate;
 
 use super::court::{Pagination, SportType};
-use super::query;
 use super::payment::PaymentStatus;
+use super::query;
 
 // ── Enums ──────────────────────────────────────────────────────
 
@@ -64,7 +64,11 @@ pub struct ListGamesQuery {
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     pub lng: Option<f64>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
-    #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
+    #[validate(range(
+        min = 0.1,
+        max = 50.0,
+        message = "radius_km must be between 0.1 and 50"
+    ))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]
     pub pagination: Pagination,
@@ -207,6 +211,8 @@ pub struct BillSplit {
     pub remainder: i32,
     pub creator_pays_extra: bool,
     pub player_count: i32,
+    pub paid_total: i64,
+    pub remaining_total: i64,
     pub payments: Vec<PlayerPayment>,
 }
 

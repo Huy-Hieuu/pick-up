@@ -1,4 +1,4 @@
-version: "3.9"
+# Local development stack; use managed secrets/TLS/backups for deployment.
 
 services:
   # ── PostgreSQL ───────────────────────────────────────────────
@@ -7,7 +7,7 @@ services:
     container_name: pickup-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: pickup
       POSTGRES_PASSWORD: pickup
@@ -26,7 +26,8 @@ services:
     container_name: pickup-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redisdata:/data
     healthcheck:
@@ -37,24 +38,29 @@ services:
 
   # ── MinIO (S3-compatible storage) ────────────────────────────
   minio:
-    image: minio/minio
+    image: ${MINIO_IMAGE:-quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
     container_name: pickup-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # Console
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - miniodata:/data
-      - ./scripts/init-mc.sh:/init-mc.sh:ro
     command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727}
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./scripts/init-mc.sh:/init-mc.sh:ro
+      - ./scripts/media-public-policy.json:/media-public-policy.json:ro
+    entrypoint: ["/bin/sh", "/init-mc.sh"]
+    depends_on: [minio]
 
   # ── PickUp API server ────────────────────────────────────────
   api:
@@ -64,27 +70,50 @@ services:
     container_name: pickup-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
-      RUST_LOG: info,pickup_server=debug
+      RUST_LOG: info
+      CORS_ORIGINS: http://localhost:8081
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://pickup.app}
+      APP_PUBLIC_API_URL: ${APP_PUBLIC_API_URL:-https://api.pickup.app}
+      APP_REQUESTS_PER_MINUTE: ${APP_REQUESTS_PER_MINUTE:-300}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       DATABASE_URL: postgres://pickup:pickup@postgres:5432/pickup
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: dev-secret-change-in-prod
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}
       JWT_ACCESS_TTL_MINUTES: 15
       JWT_REFRESH_TTL_DAYS: 30
-      S3_ENDPOINT: http://minio:9000
+      MOMO_PARTNER_CODE: ${MOMO_PARTNER_CODE:-}
+      MOMO_ACCESS_KEY: ${MOMO_ACCESS_KEY:-}
+      MOMO_SECRET_KEY: ${MOMO_SECRET_KEY:-}
+      MOMO_ENDPOINT: ${MOMO_ENDPOINT:-https://test-payment.momo.vn/v2/gateway/api/create}
+      ZALOPAY_APP_ID: ${ZALOPAY_APP_ID:-}
+      ZALOPAY_KEY1: ${ZALOPAY_KEY1:-}
+      ZALOPAY_KEY2: ${ZALOPAY_KEY2:-}
+      ZALOPAY_ENDPOINT: ${ZALOPAY_ENDPOINT:-https://sb-openapi.zalopay.vn/v2/create}
+      # Presigning is local; this URL must be reachable by the client browser.
+      S3_ENDPOINT: http://localhost:9000
+      S3_INTERNAL_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: pickup-media
+      S3_PUBLIC_URL: http://localhost:9000/pickup-media
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_MAIL_FROM: ${SMTP_MAIL_FROM:-noreply@pickup.app}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

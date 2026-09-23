@@ -1,4 +1,4 @@
-use axum::{body::Bytes, extract::State, routing::post, Json, Router};
+use axum::{body::Bytes, extract::State, http::StatusCode, routing::post, Json, Router};
 
 use crate::error::AppResult;
 use crate::services::PaymentService;
@@ -13,14 +13,11 @@ pub fn router() -> Router<AppState> {
 /// `POST /webhooks/momo` — Momo payment callback.
 ///
 /// **No auth** — identity is verified via HMAC signature.
-async fn momo_webhook(
-    State(state): State<AppState>,
-    body: Bytes,
-) -> AppResult<Json<serde_json::Value>> {
+async fn momo_webhook(State(state): State<AppState>, body: Bytes) -> AppResult<StatusCode> {
     let body_str = String::from_utf8(body.to_vec())
         .map_err(|e| crate::error::AppError::BadRequest(format!("Invalid UTF-8 body: {e}")))?;
-    PaymentService::handle_momo_webhook(&state.pool, &body_str).await?;
-    Ok(Json(serde_json::json!({ "resultCode": 0 }))) // reached only after implementation
+    PaymentService::handle_momo_webhook(&state.pool, &state.settings, &body_str).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /webhooks/zalopay` — ZaloPay payment callback.
@@ -32,6 +29,6 @@ async fn zalopay_webhook(
 ) -> AppResult<Json<serde_json::Value>> {
     let body_str = String::from_utf8(body.to_vec())
         .map_err(|e| crate::error::AppError::BadRequest(format!("Invalid UTF-8 body: {e}")))?;
-    PaymentService::handle_zalopay_webhook(&state.pool, &body_str).await?;
+    PaymentService::handle_zalopay_webhook(&state.pool, &state.settings, &body_str).await?;
     Ok(Json(serde_json::json!({ "return_code": 1 })))
 }

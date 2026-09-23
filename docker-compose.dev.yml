@@ -1,4 +1,3 @@
-version: "3.9"
 
 # Lightweight dev stack — run the API server locally via `cargo run`
 # Usage: docker compose -f docker-compose.dev.yml up -d
@@ -9,7 +8,7 @@ services:
     container_name: pickup-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: pickup
       POSTGRES_PASSWORD: pickup
@@ -27,7 +26,8 @@ services:
     container_name: pickup-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redisdata:/data
     healthcheck:
@@ -37,25 +37,29 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio
+    image: ${MINIO_IMAGE:-quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
     container_name: pickup-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - miniodata:/data
+    command: server /data --console-address ":9001"
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727}
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
       - ./scripts/init-mc.sh:/init-mc.sh:ro
-#    command: server /data --console-address ":9001"
-    entrypoint: [ "/bin/sh", "-c", "minio server /data --console-address ':9001' & sleep 5 && sh /init-mc.sh && wait" ]
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      - ./scripts/media-public-policy.json:/media-public-policy.json:ro
+    entrypoint: ["/bin/sh", "/init-mc.sh"]
+    depends_on: [minio]
 
 volumes:
   pgdata:

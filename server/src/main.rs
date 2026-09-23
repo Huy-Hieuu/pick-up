@@ -4,7 +4,6 @@ use pickup_server::config::Settings;
 use pickup_server::db;
 use pickup_server::routes;
 use pickup_server::state::AppState;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,43 +42,70 @@ async fn main() -> anyhow::Result<()> {
             None,
             "static",
         );
-        let region = aws_types::region::Region::new("auto");
+        let region = aws_types::region::Region::new(settings.s3.region.clone());
         let cfg = aws_config::defaults(BehaviorVersion::latest())
             .endpoint_url(&settings.s3.endpoint)
             .credentials_provider(creds)
             .region(region)
-            .no_credentials()
             .behavior_version(aws_config::BehaviorVersion::latest());
         let s3_config = cfg.load().await;
 
         let mut s3_builder = aws_sdk_s3::config::Builder::from(&s3_config);
         s3_builder.set_force_path_style(Some(true));
-        s3_builder.set_region(Some(aws_types::region::Region::new("auto")));
+        s3_builder.set_region(Some(aws_types::region::Region::new(
+            settings.s3.region.clone(),
+        )));
         let s3_config = s3_builder.build();
 
         aws_sdk_s3::Client::from_conf(s3_config)
     };
 
     // Build shared application state.
-    let state = AppState::new(pool, redis, settings.clone(), s3_client);
+    let internal_s3 = aws_sdk_s3::Client::from_conf(
+        s3_client
+            .config()
+            .to_builder()
+            .endpoint_url(&settings.s3.internal_endpoint)
+            .build(),
+    );
+    let mut state = AppState::new(pool, redis, settings.clone(), s3_client);
+    state.s3_client = internal_s3;
 
     // Cancellation token for coordinated shutdown.
-    let cancel_token = CancellationToken::new();
+    let cancel_token = state.shutdown.clone();
     let cancel_clone = cancel_token.clone();
 
     // Start background jobs (email queue worker, etc.).
-    pickup_server::jobs::start_workers(&state, cancel_clone).await?;
+    let worker_handles = pickup_server::jobs::start_workers(&state, cancel_clone).await?;
 
     // Build the Axum router with all routes.
     let app = routes::build_router(state);
 
     // Bind and serve with graceful shutdown.
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", settings.app.host, settings.app.port)).await?;
+    let listener =
+        tokio::net::TcpListener::bind(format!("{}:{}", settings.app.host, settings.app.port))
+            .await?;
     tracing::info!("Server listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(cancel_token))
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(cancel_token))
+    .await?;
+
+    if tokio::time::timeout(std::time::Duration::from_secs(12), async {
+        for worker in worker_handles {
+            if let Err(error) = worker.await {
+                tracing::error!(%error, "Background worker stopped unexpectedly");
+            }
+        }
+    })
+    .await
+    .is_err()
+    {
+        tracing::error!("Background workers did not stop within the grace period");
+    }
 
     tracing::info!("Server shutdown complete");
     Ok(())

@@ -1,5 +1,7 @@
 use std::env;
 
+use ipnet::IpNet;
+
 /// Application settings loaded from environment variables.
 ///
 /// In production, these come from the host environment.
@@ -22,6 +24,10 @@ pub struct AppSettings {
     pub host: String,
     pub port: u16,
     pub cors_origins: Vec<String>,
+    pub public_app_url: String,
+    pub public_api_url: String,
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    pub requests_per_minute: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +88,8 @@ pub struct ZaloPaySettings {
 #[derive(Debug, Clone)]
 pub struct S3Settings {
     pub endpoint: String,
+    pub internal_endpoint: String,
+    pub region: String,
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
@@ -108,6 +116,29 @@ impl Settings {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect(),
+                public_app_url: public_https_url("APP_PUBLIC_URL", "https://pickup.app")?,
+                public_api_url: public_https_url("APP_PUBLIC_API_URL", "https://api.pickup.app")?,
+                trusted_proxy_cidrs: env::var("TRUSTED_PROXY_CIDRS")
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|cidr| !cidr.is_empty())
+                    .map(|cidr| {
+                        cidr.parse::<IpNet>().map_err(|e| {
+                            anyhow::anyhow!("Invalid TRUSTED_PROXY_CIDRS entry {cidr}: {e}")
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                requests_per_minute: {
+                    let limit: u32 = env::var("APP_REQUESTS_PER_MINUTE")
+                        .unwrap_or_else(|_| "300".into())
+                        .parse()?;
+                    anyhow::ensure!(
+                        (1..=100_000).contains(&limit),
+                        "APP_REQUESTS_PER_MINUTE must be 1–100000"
+                    );
+                    limit
+                },
             },
             database: DatabaseSettings {
                 url: env::var("DATABASE_URL")
@@ -124,8 +155,7 @@ impl Settings {
                     .parse()?,
             },
             redis: RedisSettings {
-                url: env::var("REDIS_URL")
-                    .unwrap_or_else(|_| "redis://localhost:6379".into()),
+                url: env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into()),
                 otp_ttl_seconds: {
                     let ttl: i64 = env::var("REDIS_OTP_TTL_SECONDS")
                         .unwrap_or_else(|_| "300".into())
@@ -150,8 +180,7 @@ impl Settings {
                 smtp_password: env::var("SMTP_PASSWORD").unwrap_or_default(),
                 mail_from: env::var("SMTP_MAIL_FROM")
                     .unwrap_or_else(|_| "noreply@pickup.app".into()),
-                mail_from_name: env::var("SMTP_MAIL_FROM_NAME")
-                    .unwrap_or_else(|_| "PickUp".into()),
+                mail_from_name: env::var("SMTP_MAIL_FROM_NAME").unwrap_or_else(|_| "PickUp".into()),
                 use_tls: env::var("SMTP_USE_TLS")
                     .unwrap_or_else(|_| "true".into())
                     .parse()
@@ -161,23 +190,25 @@ impl Settings {
                 secret: {
                     let secret = env::var("JWT_SECRET")
                         .map_err(|_| anyhow::anyhow!("JWT_SECRET is required"))?;
-                    if secret == "change-me-in-production" {
-                        tracing::warn!("⚠️  JWT_SECRET is set to the default value — change it in production!");
-                    }
+                    anyhow::ensure!(secret.len() >= 32 && !secret.contains("change-me") && !secret.contains("change-in-prod"),
+                        "JWT_SECRET must be a random secret of at least 32 bytes, not a placeholder");
                     secret
                 },
                 access_ttl_minutes: {
                     let ttl: i64 = env::var("JWT_ACCESS_TTL_MINUTES")
                         .unwrap_or_else(|_| "15".into())
                         .parse()?;
-                    anyhow::ensure!(ttl > 0, "JWT_ACCESS_TTL_MINUTES must be positive");
+                    anyhow::ensure!(
+                        (1..=60).contains(&ttl),
+                        "JWT_ACCESS_TTL_MINUTES must be 1–60"
+                    );
                     ttl
                 },
                 refresh_ttl_days: {
                     let ttl: i64 = env::var("JWT_REFRESH_TTL_DAYS")
                         .unwrap_or_else(|_| "30".into())
                         .parse()?;
-                    anyhow::ensure!(ttl > 0, "JWT_REFRESH_TTL_DAYS must be positive");
+                    anyhow::ensure!((1..=90).contains(&ttl), "JWT_REFRESH_TTL_DAYS must be 1–90");
                     ttl
                 },
             },
@@ -190,8 +221,9 @@ impl Settings {
                 partner_code: env::var("MOMO_PARTNER_CODE").unwrap_or_default(),
                 access_key: env::var("MOMO_ACCESS_KEY").unwrap_or_default(),
                 secret_key: env::var("MOMO_SECRET_KEY").unwrap_or_default(),
-                endpoint: env::var("MOMO_ENDPOINT")
-                    .unwrap_or_else(|_| "https://test-payment.momo.vn/v2/gateway/api/create".into()),
+                endpoint: env::var("MOMO_ENDPOINT").unwrap_or_else(|_| {
+                    "https://test-payment.momo.vn/v2/gateway/api/create".into()
+                }),
             },
             zalopay: ZaloPaySettings {
                 app_id: env::var("ZALOPAY_APP_ID").unwrap_or_default(),
@@ -203,12 +235,15 @@ impl Settings {
             s3: S3Settings {
                 endpoint: env::var("S3_ENDPOINT")
                     .unwrap_or_else(|_| "http://localhost:9000".into()),
+                internal_endpoint: env::var("S3_INTERNAL_ENDPOINT").unwrap_or_else(|_| {
+                    env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".into())
+                }),
+                region: env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".into()),
                 access_key: env::var("S3_ACCESS_KEY")
                     .map_err(|_| anyhow::anyhow!("S3_ACCESS_KEY is required"))?,
                 secret_key: env::var("S3_SECRET_KEY")
                     .map_err(|_| anyhow::anyhow!("S3_SECRET_KEY is required"))?,
-                bucket: env::var("S3_BUCKET")
-                    .unwrap_or_else(|_| "pickup-media".into()),
+                bucket: env::var("S3_BUCKET").unwrap_or_else(|_| "pickup-media".into()),
                 public_url: {
                     let url = env::var("S3_PUBLIC_URL")
                         .unwrap_or_else(|_| "http://localhost:9000/pickup-media".into());
@@ -223,4 +258,20 @@ impl Settings {
         };
         Ok(settings)
     }
+}
+
+fn public_https_url(name: &str, default: &str) -> anyhow::Result<String> {
+    let value = env::var(name).unwrap_or_else(|_| default.to_owned());
+    let parsed = url::Url::parse(&value).map_err(|e| anyhow::anyhow!("{name} is invalid: {e}"))?;
+    let is_local_http = parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    anyhow::ensure!(
+        parsed.scheme() == "https" || is_local_http,
+        "{name} must use HTTPS (HTTP is allowed only for localhost)"
+    );
+    anyhow::ensure!(
+        parsed.host_str().is_some() && parsed.username().is_empty() && parsed.password().is_none(),
+        "{name} must be an absolute URL without embedded credentials"
+    );
+    Ok(value.trim_end_matches('/').to_owned())
 }

@@ -38,6 +38,15 @@ pub enum AppError {
     #[error("Too many requests: {0}")]
     TooManyRequests(String),
 
+    #[error("Payment provider unavailable")]
+    PaymentGateway,
+
+    #[error("Payment provider rejected the order")]
+    PaymentRejected,
+
+    #[error("Payment provider order outcome is uncertain")]
+    PaymentOrderUncertain,
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 
@@ -65,18 +74,39 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
-            AppError::Unprocessable(msg) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE", msg.clone())
-            }
-            AppError::PaymentRequired(msg) => {
-                (StatusCode::PAYMENT_REQUIRED, "PAYMENT_REQUIRED", msg.clone())
-            }
+            AppError::Unprocessable(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "UNPROCESSABLE",
+                msg.clone(),
+            ),
+            AppError::PaymentRequired(msg) => (
+                StatusCode::PAYMENT_REQUIRED,
+                "PAYMENT_REQUIRED",
+                msg.clone(),
+            ),
             AppError::Unimplemented(msg) => {
                 (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED", msg.clone())
             }
-            AppError::TooManyRequests(msg) => {
-                (StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", msg.clone())
-            }
+            AppError::TooManyRequests(msg) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "TOO_MANY_REQUESTS",
+                msg.clone(),
+            ),
+            AppError::PaymentGateway => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_GATEWAY",
+                "Payment provider unavailable".into(),
+            ),
+            AppError::PaymentRejected => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_REJECTED",
+                "Payment order could not be created".into(),
+            ),
+            AppError::PaymentOrderUncertain => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_ORDER_UNCERTAIN",
+                "Payment outcome needs reconciliation; do not start another payment".into(),
+            ),
             AppError::Internal(err) => {
                 tracing::error!("Internal error: {err:#}");
                 (
@@ -87,51 +117,71 @@ impl IntoResponse for AppError {
             }
             // Map common SQLx errors to proper HTTP statuses.
             AppError::Database(err) => match err {
-                sqlx::Error::RowNotFound => {
-                    (StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found".into())
-                }
+                sqlx::Error::RowNotFound => (
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Resource not found".into(),
+                ),
                 sqlx::Error::Database(db_err) => match db_err.code().as_deref() {
                     // 23505 = unique_violation
-                    Some("23505") => {
-                        (StatusCode::CONFLICT, "CONFLICT", "Resource already exists".into())
-                    }
+                    Some("23505") => (
+                        StatusCode::CONFLICT,
+                        "CONFLICT",
+                        "Resource already exists".into(),
+                    ),
                     // 23503 = foreign_key_violation
-                    Some("23503") => {
-                        (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Referenced resource not found".into())
-                    }
+                    Some("23503") => (
+                        StatusCode::BAD_REQUEST,
+                        "BAD_REQUEST",
+                        "Referenced resource not found".into(),
+                    ),
                     // 23514 = check_violation
-                    Some("23514") => {
-                        (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Constraint violation".into())
-                    }
+                    Some("23514") => (
+                        StatusCode::BAD_REQUEST,
+                        "BAD_REQUEST",
+                        "Constraint violation".into(),
+                    ),
                     _ => {
                         tracing::error!("Database error: {err:#}");
-                        (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Database error".into())
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "INTERNAL_ERROR",
+                            "Database error".into(),
+                        )
                     }
                 },
                 sqlx::Error::PoolTimedOut => {
                     tracing::warn!("Database connection pool exhausted");
-                    (StatusCode::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE", "Service temporarily unavailable, please retry".into())
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "SERVICE_UNAVAILABLE",
+                        "Service temporarily unavailable, please retry".into(),
+                    )
                 }
                 _ => {
                     tracing::error!("Database error: {err:#}");
-                    (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Database error".into())
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_ERROR",
+                        "Database error".into(),
+                    )
                 }
             },
         };
 
         let body = ErrorBody {
-            error: ErrorDetail {
-                code,
-                message,
-            },
+            error: ErrorDetail { code, message },
         };
 
         let mut response = (status, Json(body)).into_response();
         if status == StatusCode::SERVICE_UNAVAILABLE {
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                "5".parse().unwrap(),
-            );
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, "5".parse().unwrap());
+        } else if status == StatusCode::TOO_MANY_REQUESTS {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, "60".parse().unwrap());
         }
         response
     }
@@ -151,42 +201,73 @@ mod tests {
 
     #[test]
     fn not_found_maps_to_404() {
-        assert_eq!(into_status_code(AppError::NotFound("test".into())), StatusCode::NOT_FOUND);
+        assert_eq!(
+            into_status_code(AppError::NotFound("test".into())),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]
     fn unauthorized_maps_to_401() {
-        assert_eq!(into_status_code(AppError::Unauthorized("test".into())), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            into_status_code(AppError::Unauthorized("test".into())),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]
     fn forbidden_maps_to_403() {
-        assert_eq!(into_status_code(AppError::Forbidden("test".into())), StatusCode::FORBIDDEN);
+        assert_eq!(
+            into_status_code(AppError::Forbidden("test".into())),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[test]
     fn bad_request_maps_to_400() {
-        assert_eq!(into_status_code(AppError::BadRequest("test".into())), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            into_status_code(AppError::BadRequest("test".into())),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]
     fn conflict_maps_to_409() {
-        assert_eq!(into_status_code(AppError::Conflict("test".into())), StatusCode::CONFLICT);
+        assert_eq!(
+            into_status_code(AppError::Conflict("test".into())),
+            StatusCode::CONFLICT
+        );
     }
 
     #[test]
     fn unprocessable_maps_to_422() {
-        assert_eq!(into_status_code(AppError::Unprocessable("test".into())), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            into_status_code(AppError::Unprocessable("test".into())),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
     }
 
     #[test]
     fn payment_required_maps_to_402() {
-        assert_eq!(into_status_code(AppError::PaymentRequired("test".into())), StatusCode::PAYMENT_REQUIRED);
+        assert_eq!(
+            into_status_code(AppError::PaymentRequired("test".into())),
+            StatusCode::PAYMENT_REQUIRED
+        );
     }
 
     #[test]
     fn unimplemented_maps_to_501() {
-        assert_eq!(into_status_code(AppError::Unimplemented("test".into())), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(
+            into_status_code(AppError::Unimplemented("test".into())),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn rate_limit_returns_retry_after() {
+        let response = AppError::TooManyRequests("retry later".into()).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "60");
     }
 
     #[test]
@@ -214,7 +295,9 @@ mod tests {
     #[tokio::test]
     async fn internal_error_hides_details() {
         let response = AppError::Internal(anyhow::anyhow!("secret db password")).into_response();
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(!body_str.contains("secret db password"));
         assert!(body_str.contains("An unexpected error occurred"));
@@ -223,7 +306,9 @@ mod tests {
     #[tokio::test]
     async fn error_response_is_valid_json() {
         let response = AppError::BadRequest("field required".into()).into_response();
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["error"]["code"], "BAD_REQUEST");
         assert_eq!(parsed["error"]["message"], "field required");

@@ -42,17 +42,27 @@ async fn create_game(
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<CreateGameRequest>,
 ) -> AppResult<Json<GameDetail>> {
-    let game = GameService::create_game(&state.pool, auth.user_id(), req).await?;
+    let mut game = GameService::create_game(&state.pool, auth.user_id(), req).await?;
+    game.split = Some(BillSplitService::calculate(&state.pool, game.game.id).await?);
     Ok(Json(game))
 }
 
 /// `GET /games/:id` — get game detail.
 async fn get_game(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<GameDetail>> {
-    let game = GameService::get_game(&state.pool, game_id).await?;
+    let mut game = GameService::get_game(&state.pool, game_id).await?;
+    if game.game.status != crate::models::game::GameStatus::Cancelled {
+        match crate::services::bill_split::authorize_billing(&state.pool, game_id, auth.user_id())
+            .await
+        {
+            Ok(()) => game.split = Some(BillSplitService::calculate(&state.pool, game_id).await?),
+            Err(crate::error::AppError::Forbidden(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
     Ok(Json(game))
 }
 
@@ -62,7 +72,8 @@ async fn join_game(
     auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<GameDetail>> {
-    let game = GameService::join_game(&state.pool, game_id, auth.user_id()).await?;
+    let mut game = GameService::join_game(&state.pool, game_id, auth.user_id()).await?;
+    game.split = Some(BillSplitService::calculate(&state.pool, game_id).await?);
     Ok(Json(game))
 }
 
@@ -100,9 +111,10 @@ async fn update_status(
 /// `GET /games/:id/split` — get current bill split.
 async fn get_split(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<BillSplit>> {
+    crate::services::bill_split::authorize_billing(&state.pool, game_id, auth.user_id()).await?;
     let split = BillSplitService::calculate(&state.pool, game_id).await?;
     Ok(Json(split))
 }

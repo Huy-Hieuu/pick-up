@@ -20,9 +20,10 @@ pub fn router() -> Router<AppState> {
 /// `GET /games/:game_id/payments` — list all payments for a game.
 async fn list_payments(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(game_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PaymentRow>>> {
+    crate::services::bill_split::authorize_billing(&state.pool, game_id, auth.user_id()).await?;
     let payments = PaymentService::list_payments(&state.pool, game_id).await?;
     Ok(Json(payments))
 }
@@ -34,6 +35,8 @@ async fn initiate_payment(
     Path(game_id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<InitiatePaymentRequest>,
 ) -> AppResult<Json<PaymentResponse>> {
-    let payment = PaymentService::initiate(&state.pool, game_id, auth.user_id(), req).await?;
+    let payment =
+        PaymentService::initiate(&state.pool, &state.settings, game_id, auth.user_id(), req)
+            .await?;
     Ok(Json(payment))
 }
