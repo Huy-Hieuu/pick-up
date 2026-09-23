@@ -1,4 +1,5 @@
 pub mod auth;
+mod auth_security;
 pub mod court;
 pub mod game;
 pub mod bill_split;

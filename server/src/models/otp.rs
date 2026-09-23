@@ -47,6 +47,7 @@ pub struct RegisterRequest {
 pub struct LoginRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
+    #[validate(length(min = 1, max = 128))]
     pub password: String,
 }
 
@@ -73,6 +74,7 @@ pub struct VerifyResetOtpResponse {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SetNewPasswordRequest {
+    #[validate(length(min = 64, max = 64))]
     pub reset_token: String,
     #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
     pub new_password: String,

@@ -124,8 +124,7 @@ impl Settings {
                     .parse()?,
             },
             redis: RedisSettings {
-                url: env::var("REDIS_URL")
-                    .unwrap_or_else(|_| "redis://localhost:6379".into()),
+                url: env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into()),
                 otp_ttl_seconds: {
                     let ttl: i64 = env::var("REDIS_OTP_TTL_SECONDS")
                         .unwrap_or_else(|_| "300".into())
@@ -150,8 +149,7 @@ impl Settings {
                 smtp_password: env::var("SMTP_PASSWORD").unwrap_or_default(),
                 mail_from: env::var("SMTP_MAIL_FROM")
                     .unwrap_or_else(|_| "noreply@pickup.app".into()),
-                mail_from_name: env::var("SMTP_MAIL_FROM_NAME")
-                    .unwrap_or_else(|_| "PickUp".into()),
+                mail_from_name: env::var("SMTP_MAIL_FROM_NAME").unwrap_or_else(|_| "PickUp".into()),
                 use_tls: env::var("SMTP_USE_TLS")
                     .unwrap_or_else(|_| "true".into())
                     .parse()
@@ -161,23 +159,25 @@ impl Settings {
                 secret: {
                     let secret = env::var("JWT_SECRET")
                         .map_err(|_| anyhow::anyhow!("JWT_SECRET is required"))?;
-                    if secret == "change-me-in-production" {
-                        tracing::warn!("⚠️  JWT_SECRET is set to the default value — change it in production!");
-                    }
+                    anyhow::ensure!(secret.len() >= 32 && !secret.contains("change-me") && !secret.contains("change-in-prod"),
+                        "JWT_SECRET must be a random secret of at least 32 bytes, not a placeholder");
                     secret
                 },
                 access_ttl_minutes: {
                     let ttl: i64 = env::var("JWT_ACCESS_TTL_MINUTES")
                         .unwrap_or_else(|_| "15".into())
                         .parse()?;
-                    anyhow::ensure!(ttl > 0, "JWT_ACCESS_TTL_MINUTES must be positive");
+                    anyhow::ensure!(
+                        (1..=60).contains(&ttl),
+                        "JWT_ACCESS_TTL_MINUTES must be 1–60"
+                    );
                     ttl
                 },
                 refresh_ttl_days: {
                     let ttl: i64 = env::var("JWT_REFRESH_TTL_DAYS")
                         .unwrap_or_else(|_| "30".into())
                         .parse()?;
-                    anyhow::ensure!(ttl > 0, "JWT_REFRESH_TTL_DAYS must be positive");
+                    anyhow::ensure!((1..=90).contains(&ttl), "JWT_REFRESH_TTL_DAYS must be 1–90");
                     ttl
                 },
             },
@@ -190,8 +190,9 @@ impl Settings {
                 partner_code: env::var("MOMO_PARTNER_CODE").unwrap_or_default(),
                 access_key: env::var("MOMO_ACCESS_KEY").unwrap_or_default(),
                 secret_key: env::var("MOMO_SECRET_KEY").unwrap_or_default(),
-                endpoint: env::var("MOMO_ENDPOINT")
-                    .unwrap_or_else(|_| "https://test-payment.momo.vn/v2/gateway/api/create".into()),
+                endpoint: env::var("MOMO_ENDPOINT").unwrap_or_else(|_| {
+                    "https://test-payment.momo.vn/v2/gateway/api/create".into()
+                }),
             },
             zalopay: ZaloPaySettings {
                 app_id: env::var("ZALOPAY_APP_ID").unwrap_or_default(),
@@ -207,8 +208,7 @@ impl Settings {
                     .map_err(|_| anyhow::anyhow!("S3_ACCESS_KEY is required"))?,
                 secret_key: env::var("S3_SECRET_KEY")
                     .map_err(|_| anyhow::anyhow!("S3_SECRET_KEY is required"))?,
-                bucket: env::var("S3_BUCKET")
-                    .unwrap_or_else(|_| "pickup-media".into()),
+                bucket: env::var("S3_BUCKET").unwrap_or_else(|_| "pickup-media".into()),
                 public_url: {
                     let url = env::var("S3_PUBLIC_URL")
                         .unwrap_or_else(|_| "http://localhost:9000/pickup-media".into());
