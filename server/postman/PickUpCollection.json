@@ -465,9 +465,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"content_type\": \"image/jpeg\"\n}"
+              "raw": "{\n  \"content_type\": \"image/jpeg\",\n  \"content_length\": 245760\n}"
             },
-            "description": "Get presigned S3 upload URL for avatar.\n\n- content_type: image/jpeg | image/png | image/webp\n- Rate limited: 5 requests/min per user\n- URL expires in 15 minutes"
+            "description": "Get a presigned S3 upload URL for an avatar. The signed PUT requires exactly content_length bytes and the declared Content-Type. Size must be 1 byte–8 MiB. Rate limited: 5 requests/min per user. URL expires in 15 minutes."
           }
         }
       ]

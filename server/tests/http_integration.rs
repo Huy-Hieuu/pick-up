@@ -251,6 +251,55 @@ async fn per_ip_rate_limit_is_shared_and_health_probes_are_exempt(pool: PgPool) 
 
 #[sqlx::test]
 #[ignore = "requires disposable PostgreSQL and Redis"]
+async fn avatar_upload_signature_binds_exact_length_and_rejects_oversize(pool: PgPool) {
+    use pickup_server::extractors::auth::create_access_token;
+    let state = state(pool.clone()).await;
+    let user: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (phone, email, email_verified, display_name) VALUES ($1, $2, TRUE, 'Player') RETURNING id",
+    ).bind(Uuid::new_v4().to_string()[..20].to_owned())
+        .bind(format!("{}@example.test", Uuid::new_v4()))
+        .fetch_one(&pool).await.unwrap();
+    let session = Uuid::new_v4();
+    sqlx::query("INSERT INTO auth_sessions (id, user_id, refresh_jti, expires_at) VALUES ($1, $2, $3, now() + interval '15 minutes')")
+        .bind(session).bind(user).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+    let token = create_access_token(user, session, &state.settings.jwt.secret, 15).unwrap();
+    let app = build_router(state);
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/upload/avatar",
+        serde_json::json!({
+            "content_type": "image/png", "content_length": 8 * 1024 * 1024 + 1
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, response) = call(
+        &app,
+        "POST",
+        "/upload/avatar",
+        serde_json::json!({
+            "content_type": "image/jpeg", "content_length": 245760
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["content_length"], 245760);
+    assert_eq!(response["max_upload_bytes"], 8 * 1024 * 1024);
+    let signed = url::Url::parse(response["upload_url"].as_str().unwrap()).unwrap();
+    let headers = signed
+        .query_pairs()
+        .find(|(key, _)| key == "X-Amz-SignedHeaders")
+        .unwrap()
+        .1;
+    assert!(headers.split(';').any(|header| header == "content-length"));
+    assert!(headers.split(';').any(|header| header == "content-type"));
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
 async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool) {
     let state = state(pool.clone()).await;
     let redis = state.redis.clone();
@@ -268,7 +317,7 @@ async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool
     assert!(pending["message"]
         .as_str()
         .unwrap()
-        .contains("Verify your email"));
+        .contains("verification instructions"));
     let code: String = redis
         .clone()
         .get(format!("otp:registration:{email}"))

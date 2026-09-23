@@ -100,7 +100,8 @@ async fn refresh_token(
     Ok(Json(resp))
 }
 
-/// `POST /auth/register` — register a new user with email and password.
+/// `POST /auth/register` — request email/password registration.
+/// Returns the same 202 response for new, existing, and concurrently registered identifiers.
 async fn register(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,

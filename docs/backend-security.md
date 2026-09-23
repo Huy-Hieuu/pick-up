@@ -30,9 +30,11 @@ before serving the new binary. Do not roll back to stateless token validation.
 Schedule `DELETE FROM auth_sessions WHERE expires_at <= now()` for expired-session
 cleanup. Issuing a session also removes that user's expired sessions.
 
-Email/password registration now returns 202 without a session, queues an OTP,
-and issues a session only after `POST /auth/verify-registration` consumes the
-single-use code. `POST /auth/resend-registration-otp` returns a generic response
+Email/password registration now returns the same 202 message without a session
+for available and already-registered addresses, queues an OTP only for a new
+account, and issues a session only after `POST /auth/verify-registration`
+consumes the single-use code. Duplicate phone/email conflicts also produce the
+generic message. `POST /auth/resend-registration-otp` returns a generic response
 for unknown/already-verified addresses and shares the cooldown. Email login OTP
 and password reset are restricted to verified addresses. Phone numbers still
 aren't verified by the current registration flow, so do not treat the phone as

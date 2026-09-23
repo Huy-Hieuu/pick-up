@@ -39,13 +39,14 @@ pub async fn get_avatar_upload_url(
         ));
     }
 
-    req.validate_content_type()?;
+    req.validate_upload()?;
 
     let presigned = UploadService::generate_avatar_presigned_put(
         &state.s3_client,
         &state.settings.s3,
         auth_user.user_id(),
         &req.content_type,
+        req.content_length,
         PRESIGNED_URL_EXPIRY_SECS,
     )
     .await?;

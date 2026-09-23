@@ -50,7 +50,7 @@ async fn register(pool: &PgPool) -> pickup_server::models::user::AuthResponse {
         pool,
         &redis,
         VerifyRegistrationRequest {
-            email: pending.email,
+            email: pending.email.clone(),
             code,
         },
         3,
@@ -401,7 +401,7 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
         &pool,
         &redis,
         VerifyRegistrationRequest {
-            email: pending.email,
+            email: pending.email.clone(),
             code: "000000".into(),
         },
         3,
@@ -411,6 +411,44 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
     )
     .await
     .is_err());
+
+    let duplicate_email = AuthService::register(
+        &pool,
+        &redis,
+        RegisterRequest {
+            phone: "0902222333".into(),
+            email: pending.email.clone(),
+            password: "another-password".into(),
+            display_name: None,
+            avatar_url: None,
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    assert_eq!(duplicate_email.message, pending.message);
+    assert_eq!(duplicate_email.email, pending.email);
+    let duplicate_phone = AuthService::register(
+        &pool,
+        &redis,
+        RegisterRequest {
+            phone: "+84901234567".into(),
+            email: "different-address@example.com".into(),
+            password: "another-password".into(),
+            display_name: None,
+            avatar_url: None,
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    assert_eq!(duplicate_phone.message, pending.message);
+    assert!(
+        db::find_user_by_email(&pool, "different-address@example.com")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[sqlx::test]

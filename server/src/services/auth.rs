@@ -15,6 +15,15 @@ use crate::models::user::{AuthResponse, PatchValue, UpdateProfileRequest, UserPr
 
 pub struct AuthService;
 
+fn registration_pending(email: String, expires_in: i64) -> RegistrationPending {
+    RegistrationPending {
+        email,
+        expires_in,
+        message:
+            "If this address can be registered, verification instructions will arrive by email",
+    }
+}
+
 impl AuthService {
     pub async fn send_otp(
         pool: &PgPool,
@@ -117,16 +126,18 @@ impl AuthService {
         req: RegisterRequest,
         otp_ttl_seconds: i64,
     ) -> AppResult<RegistrationPending> {
-        if db::find_user_by_email(pool, &req.email).await?.is_some() {
-            return Err(AppError::Conflict("Email already registered".into()));
-        }
+        // Perform the same password work for existing and new addresses before
+        // returning a generic response, so registration is not an email oracle.
         let password_hash = super::auth_security::hash_password(req.password).await?;
+        if db::find_user_by_email(pool, &req.email).await?.is_some() {
+            return Ok(registration_pending(req.email, otp_ttl_seconds));
+        }
         let phone = if let Some(local) = req.phone.strip_prefix('0') {
             format!("+84{local}")
         } else {
             req.phone.clone()
         };
-        db::create_user(
+        match db::create_user(
             pool,
             &phone,
             &req.email,
@@ -134,14 +145,23 @@ impl AuthService {
             req.display_name.as_deref(),
             req.avatar_url.as_deref(),
         )
-        .await?;
+        .await
+        {
+            Ok(_) => {}
+            Err(error)
+                if error
+                    .as_database_error()
+                    .is_some_and(|db| db.code().as_deref() == Some("23505")) =>
+            {
+                // Covers a concurrent email or phone registration without
+                // revealing which identifier already belongs to an account.
+                return Ok(registration_pending(req.email, otp_ttl_seconds));
+            }
+            Err(error) => return Err(AppError::Database(error)),
+        }
         super::auth_security::send_registration_otp(pool, redis, &req.email, otp_ttl_seconds)
             .await?;
-        Ok(RegistrationPending {
-            email: req.email,
-            expires_in: otp_ttl_seconds,
-            message: "Verify your email to activate your account",
-        })
+        Ok(registration_pending(req.email, otp_ttl_seconds))
     }
 
     pub async fn resend_registration_otp(

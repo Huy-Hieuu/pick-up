@@ -80,6 +80,8 @@ cross-instance updates, connection/access limits, and reconnect behavior.
 The [email queue operations guide](docs/backend-email.md) covers leases, retries
 and Redis persistence. [API rate limits and proxy trust](docs/backend-rate-limits.md)
 documents the default shared quota and safe reverse-proxy setup.
+The [avatar upload contract](docs/backend-uploads.md) documents the signed
+8 MiB size limit and the mobile client's required PUT headers.
 
 Remaining launch gates:
 

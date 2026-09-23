@@ -38,13 +38,13 @@ pub async fn enqueue_email(
     })?;
     let mut conn = redis.clone();
     let accepted: i32 = redis::Script::new(r#"
-        local length = redis.call('LLEN', KEYS[1]) + redis.call('HLEN', KEYS[2]) + redis.call('ZCARD', KEYS[3])
+        local length = redis.call('LLEN', KEYS[1]) + redis.call('HLEN', KEYS[2]) + redis.call('ZCARD', KEYS[3]) + redis.call('HLEN', KEYS[4])
         if length >= tonumber(ARGV[2]) then return 0 end
         redis.call('LPUSH', KEYS[1], ARGV[1])
-        if redis.call('LLEN', KEYS[4]) == 0 then redis.call('LPUSH', KEYS[4], 'ready') end
+        if redis.call('LLEN', KEYS[5]) == 0 then redis.call('LPUSH', KEYS[5], 'ready') end
         return 1
     "#).key("email:queue").key("email:processing").key("email:retry")
-        .key("email:wake").arg(&payload).arg(MAX_QUEUE_LENGTH)
+        .key("email:retry-payloads").key("email:wake").arg(&payload).arg(MAX_QUEUE_LENGTH)
         .invoke_async(&mut conn)
         .await
         .map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;

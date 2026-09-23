@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::config::S3Settings;
 use crate::error::{AppError, AppResult};
+use crate::models::upload::MAX_AVATAR_UPLOAD_BYTES;
 
 /// Hardcoded MIME type → file extension map.
 /// Avoids fragile string parsing of content-type values.
@@ -25,11 +26,17 @@ impl UploadService {
         settings: &S3Settings,
         user_id: Uuid,
         content_type: &str,
+        content_length: u64,
         expires_secs: u64,
     ) -> AppResult<PresignedUploadUrl> {
         let extension = extension_for_mime(content_type).ok_or_else(|| {
             AppError::BadRequest(format!("Unsupported content type: {content_type}"))
         })?;
+        if content_length == 0 || content_length > MAX_AVATAR_UPLOAD_BYTES {
+            return Err(AppError::BadRequest(
+                "Avatar size must be between 1 byte and 8 MiB".into(),
+            ));
+        }
 
         let object_key = format!("avatars/{}/avatar.{}", user_id, extension);
 
@@ -43,6 +50,7 @@ impl UploadService {
             .bucket(&settings.bucket)
             .key(&object_key)
             .content_type(content_type)
+            .content_length(content_length as i64)
             .presigned(presigning_config)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("S3 presign error: {e}")))?;
@@ -58,6 +66,7 @@ impl UploadService {
             object_key,
             public_url,
             expires_secs,
+            content_length,
         })
     }
 }
@@ -78,6 +87,7 @@ pub struct PresignedUploadUrl {
     pub object_key: String,
     pub public_url: String,
     pub expires_secs: u64,
+    pub content_length: u64,
 }
 
 #[cfg(test)]
