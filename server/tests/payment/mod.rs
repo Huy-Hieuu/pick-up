@@ -1061,3 +1061,42 @@ async fn processing_callback_can_transition_to_paid_with_the_same_transaction(po
         .unwrap();
     assert_eq!(status, PaymentStatus::Paid);
 }
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn rejected_retry_does_not_release_an_earlier_uncertain_order(pool: PgPool) {
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let game_id = game(&pool, creator, 3).await;
+    psp.mock
+        .momo_transport_failure
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        initiate(&state, game_id, creator, PaymentProvider::Momo).await,
+        Err(AppError::PaymentGateway)
+    ));
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM payments WHERE game_id = $1")
+        .bind(game_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE payments SET provider_create_claim_until = now() - interval '1 second' WHERE id = $1")
+        .bind(id).execute(&pool).await.unwrap();
+    psp.mock
+        .momo_transport_failure
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    psp.mock
+        .momo_result_code
+        .store(20, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        initiate(&state, game_id, creator, PaymentProvider::Momo).await,
+        Err(AppError::PaymentOrderUncertain)
+    ));
+    assert!(initiate(&state, game_id, creator, PaymentProvider::Momo)
+        .await
+        .is_err());
+    let (count, held): (i64, i64) = sqlx::query_as("SELECT count(*), count(*) FILTER (WHERE status = 'disputed') FROM payments WHERE game_id = $1")
+        .bind(game_id).fetch_one(&pool).await.unwrap();
+    assert_eq!((count, held), (1, 1));
+}

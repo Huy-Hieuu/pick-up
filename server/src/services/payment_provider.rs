@@ -191,18 +191,18 @@ pub(super) async fn create_momo_order(
         signature: hmac_hex(&cfg.key, &raw)?,
     };
     let response: MomoCreateResponse = post_json(&cfg.endpoint, &body).await?;
-    if response.result_code != 0 {
-        if momo_result_is_uncertain(response.result_code) {
-            return Err(AppError::PaymentOrderUncertain);
-        }
-        return Err(AppError::PaymentRejected);
-    }
     if response.partner_code != cfg.partner_code
         || response.request_id != request_id
         || response.order_id != order_id
         || response.amount != amount
     {
         return Err(AppError::PaymentGateway);
+    }
+    if response.result_code != 0 {
+        if momo_result_is_uncertain(response.result_code) {
+            return Err(AppError::PaymentOrderUncertain);
+        }
+        return Err(AppError::PaymentRejected);
     }
     validate_payment_url(
         response

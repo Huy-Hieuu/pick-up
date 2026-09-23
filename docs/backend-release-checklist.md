@@ -7,7 +7,7 @@ credentials, and no deployed environment was exercised.
 
 ## Verified locally
 
-- 132 unit/integration tests, including disposable PostgreSQL/Redis, local
+- 133 unit/integration tests, including disposable PostgreSQL/Redis, local
   SMTP, provider mocks, WebSockets across instances and storage mocks.
 - Formatting, strict Clippy, dependency audit using the documented unused-RSA
   exception, and release Docker image build. The excluded dependencies remain

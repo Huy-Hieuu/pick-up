@@ -163,6 +163,7 @@ impl PaymentService {
         .fetch_optional(&mut *tx)
         .await?;
 
+        let retrying_existing_order = existing.is_some();
         let reservation = match existing {
             Some(row) if row.status == PaymentStatus::Paid => {
                 return Err(AppError::Conflict(
@@ -231,6 +232,13 @@ impl PaymentService {
         };
         let url = match provider_result {
             Ok(url) => url,
+            Err(AppError::PaymentRejected) if retrying_existing_order => {
+                // A rejection of this request cannot disprove an earlier
+                // request's capture after a lost response or config change.
+                sqlx::query("UPDATE payments SET status = 'disputed', dispute_reason = 'provider_creation_uncertain', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1 AND status = 'pending' AND provider_create_claim = $2")
+                    .bind(reservation.id).bind(claim).execute(pool).await?;
+                return Err(AppError::PaymentOrderUncertain);
+            }
             Err(AppError::PaymentRejected) => {
                 // The PSP definitively refused the order; release the user's slot.
                 sqlx::query("UPDATE payments SET status = 'expired', provider_create_claim = NULL, provider_create_claim_until = NULL WHERE id = $1 AND status = 'pending' AND provider_create_claim = $2")
