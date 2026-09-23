@@ -12,6 +12,8 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod realtime;
+
 async fn state(pool: PgPool) -> AppState {
     let redis_url = std::env::var("TEST_REDIS_URL").expect("TEST_REDIS_URL required");
     let redis = redis::Client::open(redis_url.as_str())

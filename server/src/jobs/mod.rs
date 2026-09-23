@@ -11,6 +11,10 @@ use tokio_util::sync::CancellationToken;
 /// Workers check the CancellationToken for graceful shutdown.
 pub async fn start_workers(state: &AppState, cancel: CancellationToken) -> anyhow::Result<()> {
     crate::jobs::email::build_smtp_transport(&state.settings.email)?;
+    state
+        .lobby
+        .start_listener(&state.pool, cancel.clone())
+        .await?;
     // Spawn the email delivery worker.
     // A blocking pop must not share the multiplexed request connection.
     let redis = crate::db::create_redis(&state.settings.redis).await?;

@@ -16,6 +16,7 @@ pub struct AppState {
     pub settings: Arc<Settings>,
     pub s3_client: Client,
     pub shutdown: tokio_util::sync::CancellationToken,
+    pub lobby: crate::ws::hub::LobbyHub,
 }
 
 impl std::fmt::Debug for AppState {
@@ -42,6 +43,7 @@ impl AppState {
             settings: Arc::new(settings),
             s3_client,
             shutdown: tokio_util::sync::CancellationToken::new(),
+            lobby: crate::ws::hub::LobbyHub::default(),
         }
     }
 }

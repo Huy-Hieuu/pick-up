@@ -74,13 +74,13 @@ strings so WebSocket bearer tokens are not logged.
 This is a hardened backend foundation, **not yet a complete production release**.
 See [authentication changes](docs/backend-security.md) and
 [billing behavior and migration checks](docs/backend-billing.md).
+The [real-time lobby protocol](docs/backend-realtime.md) documents committed
+cross-instance updates, connection/access limits, and reconnect behavior.
 
 Remaining launch gates:
 
 - Momo/ZaloPay initiation, authenticated callbacks, reconciliation, retries and
   refunds. These endpoints deliberately return 501 until implemented/tested.
-- Game lobby event broadcasting (the WebSocket currently authenticates, pings
-  and closes on expiry/revocation/shutdown but does not broadcast mutations).
 - Verified registration/contact ownership and IP/global ingress rate limiting.
 - Durable email acknowledgement/recovery: the current list queue can lose an
   in-flight job if a process crashes after popping it. SMTP delivery must be

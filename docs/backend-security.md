@@ -8,7 +8,8 @@ before serving the new binary. Do not roll back to stateless token validation.
 - Refresh is single-use and atomic. Clients must serialize refresh requests and
   replace both tokens after success. A repeated/expired/revoked token returns 401.
 - Password changes revoke all sessions in the same database transaction. HTTP
-  requests check session validity; open WebSockets recheck it every 30 seconds.
+  requests check session validity; open WebSockets recheck it before snapshots
+  and at least every 15 seconds while idle, and close at access-token expiry.
 - Login OTP and password-reset OTP are separate purposes. Codes expire without
   extension on failed attempts and can succeed only once, including concurrently.
 - Login has a five-attempt/300-second budget per exact email, including unknown

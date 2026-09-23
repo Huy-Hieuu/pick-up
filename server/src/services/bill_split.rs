@@ -41,10 +41,20 @@ impl BillSplitService {
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             .execute(&mut *tx)
             .await?;
+        let split = Self::calculate_on(&mut tx, game_id).await?;
+        tx.commit().await?;
+        Ok(split)
+    }
+
+    /// Reuse the caller's consistent transaction for a full lobby snapshot.
+    pub(crate) async fn calculate_on(
+        conn: &mut sqlx::PgConnection,
+        game_id: Uuid,
+    ) -> AppResult<BillSplit> {
         let (creator_id, total_amount, status): (Uuid, i32, GameStatus) =
             sqlx::query_as("SELECT creator_id, total_amount, status FROM games WHERE id = $1")
                 .bind(game_id)
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut *conn)
                 .await?;
         if status == GameStatus::Cancelled {
             return Err(AppError::Conflict("Cancelled games are not payable".into()));
@@ -59,8 +69,7 @@ impl BillSplitService {
                 SELECT user_id FROM game_players WHERE game_id = $1
                 UNION SELECT user_id FROM payments WHERE game_id = $1 AND status = 'paid'
             ) ORDER BY u.id
-        "#).bind(game_id).fetch_all(&mut *tx).await?;
-        tx.commit().await?;
+        "#).bind(game_id).fetch_all(&mut *conn).await?;
         split_players(total_amount, creator_id, players)
     }
 }
