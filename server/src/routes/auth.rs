@@ -1,16 +1,16 @@
-/// Auth routes — phone/email OTP via Redis + lettre email delivery.
-///
-/// Exposes:
-/// - `POST /auth/otp`           — request OTP to email
-/// - `POST /auth/verify`        — verify OTP, get JWT tokens
-/// - `POST /auth/refresh`       — refresh access token
-/// - `POST /auth/register`      — register with email + password
-/// - `POST /auth/login`          — login with email + password
-/// - `POST /auth/forgot-password` — step 1: send OTP for reset
-/// - `POST /auth/verify-reset-otp` — step 2: verify OTP, get temp reset_token
-/// - `POST /auth/set-new-password` — step 3: set new password with reset_token
-/// - `GET  /auth/me`             — get current user profile
-/// - `PATCH /auth/me`            — update current user profile
+//! Auth routes — phone/email OTP via Redis + lettre email delivery.
+//!
+//! Exposes:
+//! - `POST /auth/otp`           — request OTP to email
+//! - `POST /auth/verify`        — verify OTP, get JWT tokens
+//! - `POST /auth/refresh`       — refresh access token
+//! - `POST /auth/register`      — register with email + password
+//! - `POST /auth/login`          — login with email + password
+//! - `POST /auth/forgot-password` — step 1: send OTP for reset
+//! - `POST /auth/verify-reset-otp` — step 2: verify OTP, get temp reset_token
+//! - `POST /auth/set-new-password` — step 3: set new password with reset_token
+//! - `GET  /auth/me`             — get current user profile
+//! - `PATCH /auth/me`            — update current user profile
 
 use axum::{
     extract::State,
@@ -20,13 +20,13 @@ use axum::{
 
 use crate::error::AppResult;
 use crate::extractors::{AuthUser, ValidatedJson};
-use crate::models::user::{AuthResponse, UserProfile};
 use crate::models::otp::{
-    ForgotPasswordRequest, LoginRequest, RefreshTokenRequest, RegisterRequest,
-    SendOtpRequest, SetNewPasswordRequest, SetNewPasswordResponse,
-    VerifyOtpRequest, VerifyResetOtpRequest, VerifyResetOtpResponse,
+    ForgotPasswordRequest, LoginRequest, RefreshTokenRequest, RegisterRequest, SendOtpRequest,
+    SetNewPasswordRequest, SetNewPasswordResponse, VerifyOtpRequest, VerifyResetOtpRequest,
+    VerifyResetOtpResponse,
 };
 use crate::models::user::UpdateProfileRequest;
+use crate::models::user::{AuthResponse, UserProfile};
 use crate::state::AppState;
 
 /// Public auth routes — no auth middleware required.
@@ -44,8 +44,7 @@ pub fn public_router() -> Router<AppState> {
 
 /// Protected auth routes — require_auth middleware applied.
 pub fn protected_router() -> Router<AppState> {
-    Router::new()
-        .route("/me", get(get_me).patch(update_me))
+    Router::new().route("/me", get(get_me).patch(update_me))
 }
 
 /// `POST /auth/otp` — request a 6-digit OTP via email.
@@ -144,7 +143,9 @@ async fn forgot_password(
     )
     .await?;
     // Always return the same response regardless of whether the email exists.
-    Ok(Json(serde_json::json!({ "message": "If the email is registered, an OTP has been sent" })))
+    Ok(Json(
+        serde_json::json!({ "message": "If the email is registered, an OTP has been sent" }),
+    ))
 }
 
 /// `POST /auth/verify-reset-otp` — step 2: verify OTP, get temp reset_token.
@@ -168,20 +169,13 @@ async fn set_new_password(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<SetNewPasswordRequest>,
 ) -> AppResult<Json<SetNewPasswordResponse>> {
-    let resp = crate::services::AuthService::set_new_password(
-        &state.pool,
-        &state.redis,
-        req,
-    )
-    .await?;
+    let resp =
+        crate::services::AuthService::set_new_password(&state.pool, &state.redis, req).await?;
     Ok(Json(resp))
 }
 
 /// `GET /auth/me` — get current user profile.
-async fn get_me(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<UserProfile>> {
+async fn get_me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserProfile>> {
     let profile = crate::services::AuthService::get_profile(&state.pool, auth.user_id()).await?;
     Ok(Json(profile))
 }
@@ -192,6 +186,7 @@ async fn update_me(
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<UpdateProfileRequest>,
 ) -> AppResult<Json<UserProfile>> {
-    let profile = crate::services::AuthService::update_profile(&state.pool, auth.user_id(), req).await?;
+    let profile =
+        crate::services::AuthService::update_profile(&state.pool, auth.user_id(), req).await?;
     Ok(Json(profile))
 }

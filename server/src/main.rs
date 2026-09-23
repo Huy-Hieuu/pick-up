@@ -4,7 +4,6 @@ use pickup_server::config::Settings;
 use pickup_server::db;
 use pickup_server::routes;
 use pickup_server::state::AppState;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -48,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
             .endpoint_url(&settings.s3.endpoint)
             .credentials_provider(creds)
             .region(region)
-            .no_credentials()
             .behavior_version(aws_config::BehaviorVersion::latest());
         let s3_config = cfg.load().await;
 
@@ -64,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(pool, redis, settings.clone(), s3_client);
 
     // Cancellation token for coordinated shutdown.
-    let cancel_token = CancellationToken::new();
+    let cancel_token = state.shutdown.clone();
     let cancel_clone = cancel_token.clone();
 
     // Start background jobs (email queue worker, etc.).
@@ -74,7 +72,9 @@ async fn main() -> anyhow::Result<()> {
     let app = routes::build_router(state);
 
     // Bind and serve with graceful shutdown.
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", settings.app.host, settings.app.port)).await?;
+    let listener =
+        tokio::net::TcpListener::bind(format!("{}:{}", settings.app.host, settings.app.port))
+            .await?;
     tracing::info!("Server listening on {}", listener.local_addr()?);
 
     axum::serve(listener, app)

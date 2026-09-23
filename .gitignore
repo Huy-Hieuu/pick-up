@@ -5,6 +5,6 @@ _bmad-output
 .ai
 server/target
 server/.env
-server/Cargo.lock
+.env
 .gitnexus
 AGENTS.md

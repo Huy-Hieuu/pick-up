@@ -121,6 +121,10 @@ async fn handle_socket(mut socket: WebSocket, game_id: Uuid, state: AppState, cl
 
     loop {
         tokio::select! {
+            _ = state.shutdown.cancelled() => {
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {

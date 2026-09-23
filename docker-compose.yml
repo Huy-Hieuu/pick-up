@@ -1,4 +1,4 @@
-version: "3.9"
+# Local development stack; use managed secrets/TLS/backups for deployment.
 
 services:
   # ── PostgreSQL ───────────────────────────────────────────────
@@ -7,7 +7,7 @@ services:
     container_name: pickup-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: pickup
       POSTGRES_PASSWORD: pickup
@@ -26,7 +26,7 @@ services:
     container_name: pickup-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -41,20 +41,24 @@ services:
     container_name: pickup-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # Console
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - miniodata:/data
-      - ./scripts/init-mc.sh:/init-mc.sh:ro
     command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+
+  minio-init:
+    image: minio/mc
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./scripts/init-mc.sh:/init-mc.sh:ro
+    entrypoint: ["/bin/sh", "/init-mc.sh"]
+    depends_on: [minio]
 
   # ── PickUp API server ────────────────────────────────────────
   api:
@@ -64,27 +68,36 @@ services:
     container_name: pickup-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
-      RUST_LOG: info,pickup_server=debug
+      RUST_LOG: info
+      CORS_ORIGINS: http://localhost:8081
       DATABASE_URL: postgres://pickup:pickup@postgres:5432/pickup
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: dev-secret-change-in-prod
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}
       JWT_ACCESS_TTL_MINUTES: 15
       JWT_REFRESH_TTL_DAYS: 30
-      S3_ENDPOINT: http://minio:9000
+      # Presigning is local; this URL must be reachable by the client browser.
+      S3_ENDPOINT: http://localhost:9000
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: pickup-media
+      S3_PUBLIC_URL: http://localhost:9000/pickup-media
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_MAIL_FROM: ${SMTP_MAIL_FROM:-noreply@pickup.app}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

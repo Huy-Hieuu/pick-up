@@ -1,4 +1,3 @@
-version: "3.9"
 
 # Lightweight dev stack — run the API server locally via `cargo run`
 # Usage: docker compose -f docker-compose.dev.yml up -d
@@ -9,7 +8,7 @@ services:
     container_name: pickup-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: pickup
       POSTGRES_PASSWORD: pickup
@@ -27,7 +26,7 @@ services:
     container_name: pickup-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -41,21 +40,24 @@ services:
     container_name: pickup-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - miniodata:/data
+    command: server /data --console-address ":9001"
+
+  minio-init:
+    image: minio/mc
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
       - ./scripts/init-mc.sh:/init-mc.sh:ro
-#    command: server /data --console-address ":9001"
-    entrypoint: [ "/bin/sh", "-c", "minio server /data --console-address ':9001' & sleep 5 && sh /init-mc.sh && wait" ]
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+    entrypoint: ["/bin/sh", "/init-mc.sh"]
+    depends_on: [minio]
 
 volumes:
   pgdata:

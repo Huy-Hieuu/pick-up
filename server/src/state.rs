@@ -15,6 +15,7 @@ pub struct AppState {
     pub redis: ConnectionManager,
     pub settings: Arc<Settings>,
     pub s3_client: Client,
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl std::fmt::Debug for AppState {
@@ -29,12 +30,18 @@ impl std::fmt::Debug for AppState {
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, redis: ConnectionManager, settings: Settings, s3_client: Client) -> Self {
+    pub fn new(
+        pool: PgPool,
+        redis: ConnectionManager,
+        settings: Settings,
+        s3_client: Client,
+    ) -> Self {
         Self {
             pool,
             redis,
             settings: Arc::new(settings),
             s3_client,
+            shutdown: tokio_util::sync::CancellationToken::new(),
         }
     }
 }

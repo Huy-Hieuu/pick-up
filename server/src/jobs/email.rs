@@ -37,7 +37,9 @@ pub async fn enqueue_email(
         body: body.to_string(),
         retry_count: 0,
     };
-    let payload = serde_json::to_string(&job).map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("JSON serialize error: {e}")))?;
+    let payload = serde_json::to_string(&job).map_err(|e| {
+        crate::error::AppError::Internal(anyhow::anyhow!("JSON serialize error: {e}"))
+    })?;
     let mut conn = redis.clone();
     let _: () = redis::cmd("LPUSH")
         .arg("email:queue")
@@ -60,17 +62,19 @@ pub async fn run_email_worker(
     let max_backoff_secs: u64 = 60;
 
     // Build the SMTP transport once and reuse it (M11).
-    let mailer = build_smtp_transport(&email_settings);
+    let mailer = match build_smtp_transport(&email_settings) {
+        Ok(mailer) => mailer,
+        Err(error) => {
+            tracing::error!(%error, "Invalid SMTP configuration; worker stopped");
+            return;
+        }
+    };
 
     loop {
         // Check for shutdown signal.
         if cancel.is_cancelled() {
-            tracing::info!("Email worker received shutdown signal, draining remaining emails...");
-            // Drain the queue before exiting.
-            while let Ok(Some(payload)) = dequeue_email(&redis, 0).await {
-                let _ = process_one_email_with_transport(&redis, &mailer, &email_settings, &payload).await;
-            }
-            tracing::info!("Email worker drained queue, exiting.");
+            // BRPOP 0 blocks forever; leave queued mail for the next worker.
+            tracing::info!("Email worker stopping; queued mail retained");
             return;
         }
 
@@ -82,7 +86,11 @@ pub async fn run_email_worker(
             }
             Err(e) => {
                 // Exponential backoff on error (M9).
-                backoff_secs = if backoff_secs == 0 { 5 } else { (backoff_secs * 2).min(max_backoff_secs) };
+                backoff_secs = if backoff_secs == 0 {
+                    5
+                } else {
+                    (backoff_secs * 2).min(max_backoff_secs)
+                };
                 tracing::error!(error = %e, backoff_secs, "Email worker error, backing off");
 
                 // Wait with shutdown awareness.
@@ -99,7 +107,9 @@ pub async fn run_email_worker(
 }
 
 /// Build SMTP transport. Reused across emails for efficiency.
-fn build_smtp_transport(email_settings: &EmailSettings) -> lettre::AsyncSmtpTransport<lettre::Tokio1Executor> {
+pub(crate) fn build_smtp_transport(
+    email_settings: &EmailSettings,
+) -> anyhow::Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> {
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 
     let credentials = Credentials::new(
@@ -107,38 +117,25 @@ fn build_smtp_transport(email_settings: &EmailSettings) -> lettre::AsyncSmtpTran
         email_settings.smtp_password.clone(),
     );
 
-    lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&email_settings.smtp_host)
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to build SMTP relay: {e}");
-            // Return a dummy transport that will fail on send — avoids panicking.
-            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay("localhost")
-                .unwrap()
-        })
+    let builder = if email_settings.use_tls {
+        lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(
+            &email_settings.smtp_host,
+        )?
+    } else {
+        // Only for trusted local development mail sinks.
+        lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(
+            &email_settings.smtp_host,
+        )
+    };
+    let mut builder = builder
         .port(email_settings.smtp_port)
-        .credentials(credentials)
-        .authentication(vec![Mechanism::Login])
-        .build()
-}
-
-/// Dequeue an email from Redis with optional timeout.
-/// timeout=0 means non-blocking (for drain), timeout>0 means blocking wait.
-async fn dequeue_email(
-    redis: &ConnectionManager,
-    timeout_secs: i32,
-) -> anyhow::Result<Option<String>> {
-    let mut conn = redis.clone();
-    let result: Vec<String> = redis::cmd("BRPOP")
-        .arg("email:queue")
-        .arg(timeout_secs)
-        .query_async(&mut conn)
-        .await
-        .map_err(|e| anyhow::anyhow!("BRPOP failed: {e}"))?;
-
-    if result.is_empty() {
-        return Ok(None);
+        .timeout(Some(std::time::Duration::from_secs(10)));
+    if !email_settings.smtp_username.is_empty() {
+        builder = builder
+            .credentials(credentials)
+            .authentication(vec![Mechanism::Login]);
     }
-    // BRPOP returns [list_name, payload] — take the last element (L4: safe unwrap replacement).
-    Ok(result.into_iter().last())
+    Ok(builder.build())
 }
 
 /// Dequeue and process a single email, with cancellation support.
@@ -263,7 +260,10 @@ async fn process_one_email_with_transport(
             .await
             .map_err(|re| anyhow::anyhow!("Failed to re-queue email: {re}"))?;
 
-        return Err(anyhow::anyhow!("SMTP send failed, re-queued (attempt {}/{MAX_RETRIES}): {e}", job.retry_count + 1));
+        return Err(anyhow::anyhow!(
+            "SMTP send failed, re-queued (attempt {}/{MAX_RETRIES}): {e}",
+            job.retry_count + 1
+        ));
     }
 
     tracing::info!(to = %job.to, "Email sent successfully");

@@ -23,6 +23,7 @@ impl AuthService {
         super::auth_security::send_otp(redis, email, "login", ttl_seconds).await
     }
 
+    #[allow(clippy::too_many_arguments)] // Retain the existing service API for callers.
     pub async fn verify_otp(
         pool: &PgPool,
         redis: &ConnectionManager,
