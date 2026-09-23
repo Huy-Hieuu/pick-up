@@ -11,10 +11,10 @@ pub struct PaymentService;
 
 impl PaymentService {
     /// List all payments for a game.
-    pub async fn list_payments(_pool: &PgPool, game_id: Uuid) -> AppResult<Vec<PaymentRow>> {
-        // TODO: SELECT FROM payments WHERE game_id = $1
-        tracing::info!(%game_id, "List payments requested (stub)");
-        Err(crate::error::AppError::BadRequest("Not implemented".into()))
+    pub async fn list_payments(pool: &PgPool, game_id: Uuid) -> AppResult<Vec<PaymentRow>> {
+        Ok(sqlx::query_as::<_, PaymentRow>(
+            "SELECT id, game_id, user_id, amount, provider, provider_txn_id, status, paid_at, created_at FROM payments WHERE game_id = $1 ORDER BY created_at, id"
+        ).bind(game_id).fetch_all(pool).await?)
     }
 
     /// Initiate a payment for a player's share of the bill.
@@ -30,7 +30,9 @@ impl PaymentService {
         // 3. Call Momo/ZaloPay API to get pay_url
         // 4. Return payment response with pay_url
         tracing::info!(%game_id, %user_id, ?req.provider, "Payment initiate requested (stub)");
-        Err(crate::error::AppError::BadRequest("Not implemented".into()))
+        Err(crate::error::AppError::Unimplemented(
+            "Payment provider integration is not enabled".into(),
+        ))
     }
 
     /// Process Momo webhook callback.
@@ -43,7 +45,7 @@ impl PaymentService {
         // 3. Update payment status
         // 4. Broadcast payment_updated via WebSocket
         tracing::info!("Momo webhook received (stub)");
-        Err(crate::error::AppError::Unprocessable(
+        Err(crate::error::AppError::Unimplemented(
             "Momo webhook handler not implemented".into(),
         ))
     }
@@ -58,7 +60,7 @@ impl PaymentService {
         // 3. Update payment status
         // 4. Broadcast payment_updated via WebSocket
         tracing::info!("ZaloPay webhook received (stub)");
-        Err(crate::error::AppError::Unprocessable(
+        Err(crate::error::AppError::Unimplemented(
             "ZaloPay webhook handler not implemented".into(),
         ))
     }
