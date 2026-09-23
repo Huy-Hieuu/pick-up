@@ -126,6 +126,23 @@ pub(super) async fn send_otp(
     Ok(())
 }
 
+pub(super) async fn send_registration_otp(
+    pool: &PgPool,
+    redis: &ConnectionManager,
+    email: &str,
+    ttl: i64,
+) -> AppResult<()> {
+    if db::email_is_verified(pool, email).await? {
+        return Err(AppError::Conflict("This email is already verified".into()));
+    }
+    if db::find_user_by_email(pool, email).await?.is_none() {
+        return Err(AppError::Unauthorized(
+            "Invalid or expired verification request".into(),
+        ));
+    }
+    send_otp(redis, email, "registration", ttl).await
+}
+
 pub(super) async fn consume_otp(
     redis: &ConnectionManager,
     email: &str,

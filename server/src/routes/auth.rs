@@ -21,9 +21,9 @@ use axum::{
 use crate::error::AppResult;
 use crate::extractors::{AuthUser, ValidatedJson};
 use crate::models::otp::{
-    ForgotPasswordRequest, LoginRequest, RefreshTokenRequest, RegisterRequest, SendOtpRequest,
-    SetNewPasswordRequest, SetNewPasswordResponse, VerifyOtpRequest, VerifyResetOtpRequest,
-    VerifyResetOtpResponse,
+    EmailRequest, ForgotPasswordRequest, LoginRequest, RefreshTokenRequest, RegisterRequest,
+    RegistrationPending, SendOtpRequest, SetNewPasswordRequest, SetNewPasswordResponse,
+    VerifyOtpRequest, VerifyRegistrationRequest, VerifyResetOtpRequest, VerifyResetOtpResponse,
 };
 use crate::models::user::UpdateProfileRequest;
 use crate::models::user::{AuthResponse, UserProfile};
@@ -36,6 +36,8 @@ pub fn public_router() -> Router<AppState> {
         .route("/verify", post(verify_otp))
         .route("/refresh", post(refresh_token))
         .route("/register", post(register))
+        .route("/verify-registration", post(verify_registration))
+        .route("/resend-registration-otp", post(resend_registration_otp))
         .route("/login", post(login))
         .route("/forgot-password", post(forgot_password))
         .route("/verify-reset-otp", post(verify_reset_otp))
@@ -53,6 +55,7 @@ async fn send_otp(
     ValidatedJson(req): ValidatedJson<SendOtpRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     crate::services::AuthService::send_otp(
+        &state.pool,
         &state.redis,
         &req.email,
         state.settings.redis.otp_ttl_seconds,
@@ -101,16 +104,56 @@ async fn refresh_token(
 async fn register(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
-) -> AppResult<Json<AuthResponse>> {
+) -> AppResult<(axum::http::StatusCode, Json<RegistrationPending>)> {
     let resp = crate::services::AuthService::register(
         &state.pool,
+        &state.redis,
         req,
+        state.settings.redis.otp_ttl_seconds,
+    )
+    .await?;
+    Ok((axum::http::StatusCode::ACCEPTED, Json(resp)))
+}
+
+/// No session is issued until the registrant controls the requested email.
+async fn verify_registration(
+    State(state): State<AppState>,
+    ValidatedJson(req): ValidatedJson<VerifyRegistrationRequest>,
+) -> AppResult<Json<AuthResponse>> {
+    let auth = crate::services::AuthService::verify_registration_otp(
+        &state.pool,
+        &state.redis,
+        req,
+        state.settings.redis.otp_max_attempts,
         &state.settings.jwt.secret,
         state.settings.jwt.access_ttl_minutes,
         state.settings.jwt.refresh_ttl_days,
     )
     .await?;
-    Ok(Json(resp))
+    Ok(Json(auth))
+}
+
+/// Always returns the same response whether the email exists or is verified.
+async fn resend_registration_otp(
+    State(state): State<AppState>,
+    ValidatedJson(req): ValidatedJson<EmailRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    match crate::services::AuthService::resend_registration_otp(
+        &state.pool,
+        &state.redis,
+        req,
+        state.settings.redis.otp_ttl_seconds,
+    )
+    .await
+    {
+        Ok(())
+        | Err(crate::error::AppError::Unauthorized(_))
+        | Err(crate::error::AppError::Conflict(_)) => {}
+        Err(error) => return Err(error),
+    }
+    Ok(Json(
+        serde_json::json!({ "message": "If the account needs verification, a code has been sent" }),
+    ))
 }
 
 /// `POST /auth/login` — login with email and password.

@@ -22,12 +22,21 @@ before serving the new binary. Do not roll back to stateless token validation.
 Schedule `DELETE FROM auth_sessions WHERE expires_at <= now()` for expired-session
 cleanup. Issuing a session also removes that user's expired sessions.
 
-Registration currently creates an account without email/phone verification.
-Do not treat those contact fields as verified identity. Before public launch,
-add registration verification and ingress abuse controls; configure TLS, restrict
-database/Redis access, and redact Authorization headers and WebSocket token query
-parameters from proxy logs. Redis stores short-lived OTP/reset grants and queued
-email bodies; treat it as sensitive infrastructure.
+Email/password registration now returns 202 without a session, queues an OTP,
+and issues a session only after `POST /auth/verify-registration` consumes the
+single-use code. `POST /auth/resend-registration-otp` returns a generic response
+for unknown/already-verified addresses and shares the cooldown. Email login OTP
+and password reset are restricted to verified addresses. Phone numbers still
+aren't verified by the current registration flow, so do not treat the phone as
+proof of identity. The verification OTP/outbound email queue lives in Redis; it
+is sensitive infrastructure.
+
+Migration `20260923000005_verify_account_email.sql` marks legacy email addresses
+unverified and revokes their existing sessions. Those users must verify their
+email and sign in again. Before deploying it, prepare support/onboarding for the
+one-time verification step. Then configure TLS, restrict database/Redis access,
+and redact Authorization headers and WebSocket token query parameters from proxy
+logs.
 
 ## Regression tests
 

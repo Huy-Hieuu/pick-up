@@ -16,12 +16,32 @@ pub async fn find_user_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Opti
     .await
 }
 
+pub async fn email_is_verified(pool: &PgPool, email: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND email_verified)")
+        .bind(email)
+        .fetch_one(pool)
+        .await
+}
+
+pub async fn verify_user_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<UserRow>> {
+    sqlx::query_as::<_, UserRow>(
+        r#"
+        UPDATE users SET email_verified = TRUE, updated_at = now()
+        WHERE email = $1 AND email_verified = FALSE
+        RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
+    "#,
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn find_user_by_email_and_password(
     pool: &PgPool,
     email: &str,
 ) -> sqlx::Result<Option<UserRow>> {
     sqlx::query_as::<_, UserRow>(
-        "SELECT id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at FROM users WHERE email = $1 AND password_hash IS NOT NULL",
+        "SELECT id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at FROM users WHERE email = $1 AND password_hash IS NOT NULL AND email_verified",
     )
     .bind(email)
     .fetch_optional(pool)

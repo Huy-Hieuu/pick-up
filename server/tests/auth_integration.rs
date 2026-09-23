@@ -5,8 +5,8 @@ use pickup_server::{
     error::AppError,
     extractors::auth::{authenticate_access_token, decode_token},
     models::otp::{
-        LoginRequest, RegisterRequest, SetNewPasswordRequest, VerifyOtpRequest,
-        VerifyResetOtpRequest,
+        EmailRequest, LoginRequest, RegisterRequest, SetNewPasswordRequest, VerifyOtpRequest,
+        VerifyRegistrationRequest, VerifyResetOtpRequest,
     },
     services::AuthService,
 };
@@ -26,8 +26,10 @@ async fn redis() -> ConnectionManager {
 
 async fn register(pool: &PgPool) -> pickup_server::models::user::AuthResponse {
     let id = Uuid::new_v4();
-    AuthService::register(
+    let redis = redis().await;
+    let pending = AuthService::register(
         pool,
+        &redis,
         RegisterRequest {
             phone: format!("+849{:08}", id.as_u128() % 100_000_000),
             email: format!("{id}@example.com"),
@@ -35,6 +37,23 @@ async fn register(pool: &PgPool) -> pickup_server::models::user::AuthResponse {
             display_name: None,
             avatar_url: None,
         },
+        300,
+    )
+    .await
+    .unwrap();
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{}", pending.email))
+        .await
+        .unwrap();
+    AuthService::verify_registration_otp(
+        pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: pending.email,
+            code,
+        },
+        3,
         SECRET,
         15,
         30,
@@ -174,7 +193,9 @@ async fn otp_attempts_are_bounded_and_do_not_extend_expiry(pool: PgPool) {
         .unwrap()
         .email
         .unwrap();
-    AuthService::send_otp(&redis, &email, 300).await.unwrap();
+    AuthService::send_otp(&pool, &redis, &email, 300)
+        .await
+        .unwrap();
     let key = format!("otp:login:{email}");
     let code: String = redis.clone().get(&key).await.unwrap();
     let _: () = redis.clone().pexpire(&key, 20_000).await.unwrap();
@@ -184,7 +205,6 @@ async fn otp_attempts_are_bounded_and_do_not_extend_expiry(pool: PgPool) {
             &redis,
             VerifyOtpRequest {
                 email: email.clone(),
-                phone: "+84901234567".into(),
                 code: "wrong!".into(),
             },
             3,
@@ -203,7 +223,6 @@ async fn otp_attempts_are_bounded_and_do_not_extend_expiry(pool: PgPool) {
         &redis,
         VerifyOtpRequest {
             email: email.clone(),
-            phone: "+84901234567".into(),
             code,
         },
         3,
@@ -243,8 +262,8 @@ async fn otp_is_single_use_and_purpose_bound(pool: PgPool) {
         .email
         .unwrap();
     let (a, b) = tokio::join!(
-        AuthService::send_otp(&redis, &email, 300),
-        AuthService::send_otp(&redis, &email, 300)
+        AuthService::send_otp(&pool, &redis, &email, 300),
+        AuthService::send_otp(&pool, &redis, &email, 300)
     );
     assert_ne!(a.is_ok(), b.is_ok());
     let code: String = redis
@@ -266,7 +285,6 @@ async fn otp_is_single_use_and_purpose_bound(pool: PgPool) {
     .is_err());
     let request = || VerifyOtpRequest {
         email: email.clone(),
-        phone: "+84901234567".into(),
         code: code.clone(),
     };
     let (a, b) = tokio::join!(
@@ -321,8 +339,10 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
     let a = register(&pool).await;
     assert!(a.user.phone.starts_with("+849"));
     assert!(!a.user.phone.contains("+84+84"));
-    let b = AuthService::register(
+    let redis = redis().await;
+    let pending = AuthService::register(
         &pool,
+        &redis,
         RegisterRequest {
             phone: "0901234567".into(),
             email: "local@example.com".into(),
@@ -330,11 +350,175 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
             display_name: None,
             avatar_url: None,
         },
+        300,
+    )
+    .await
+    .unwrap();
+    let verified: bool = sqlx::query_scalar("SELECT email_verified FROM users WHERE email = $1")
+        .bind(&pending.email)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !verified,
+        "registration does not mark an unproved address as verified"
+    );
+    let sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1",
+    )
+    .bind(&pending.email)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sessions, 0, "no session is issued before OTP verification");
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{}", pending.email))
+        .await
+        .unwrap();
+    let auth = AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: pending.email.clone(),
+            code,
+        },
+        3,
         SECRET,
         15,
         30,
     )
     .await
     .unwrap();
-    assert_eq!(b.user.phone, "+84901234567");
+    assert_eq!(auth.user.phone, "+84901234567");
+    let verified: bool = sqlx::query_scalar("SELECT email_verified FROM users WHERE email = $1")
+        .bind(&pending.email)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(verified);
+    assert!(AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: pending.email,
+            code: "000000".into(),
+        },
+        3,
+        SECRET,
+        15,
+        30
+    )
+    .await
+    .is_err());
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
+    let redis = redis().await;
+    let email = format!("{}@example.com", Uuid::new_v4());
+    let pending = AuthService::register(
+        &pool,
+        &redis,
+        RegisterRequest {
+            phone: "0907777666".into(),
+            email: email.clone(),
+            password: "verified-pass-123".into(),
+            display_name: None,
+            avatar_url: None,
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pending.email, email);
+    assert!(matches!(
+        AuthService::login(
+            &pool,
+            &redis,
+            LoginRequest {
+                email: email.clone(),
+                password: "verified-pass-123".into(),
+            },
+            SECRET,
+            15,
+            30
+        )
+        .await,
+        Err(AppError::Unauthorized(_))
+    ));
+    assert!(matches!(
+        AuthService::send_otp(&pool, &redis, &email, 300).await,
+        Err(AppError::Unauthorized(_))
+    ));
+    let session_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1",
+    )
+    .bind(&email)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(session_count, 0);
+    assert!(matches!(
+        AuthService::resend_registration_otp(
+            &pool,
+            &redis,
+            EmailRequest {
+                email: email.clone(),
+            },
+            300
+        )
+        .await,
+        Err(AppError::TooManyRequests(_))
+    ));
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{email}"))
+        .await
+        .unwrap();
+    let auth = AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: email.clone(),
+            code: code.clone(),
+        },
+        3,
+        SECRET,
+        15,
+        30,
+    )
+    .await
+    .unwrap();
+    assert!(authenticate_access_token(&pool, &auth.access_token, SECRET)
+        .await
+        .is_ok());
+    assert!(AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: email.clone(),
+            code,
+        },
+        3,
+        SECRET,
+        15,
+        30
+    )
+    .await
+    .is_err());
+    assert!(AuthService::login(
+        &pool,
+        &redis,
+        LoginRequest {
+            email,
+            password: "verified-pass-123".into(),
+        },
+        SECRET,
+        15,
+        30
+    )
+    .await
+    .is_ok());
 }

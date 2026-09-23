@@ -10,6 +10,7 @@ use pickup_server::{
     routes::build_router,
     state::AppState,
 };
+use redis::AsyncCommands;
 use sqlx::PgPool;
 use std::time::Duration;
 use tower::ServiceExt;
@@ -196,11 +197,38 @@ async fn router_enforces_auth_and_responds_to_health_and_body_limits(pool: PgPoo
 #[sqlx::test]
 #[ignore = "requires disposable PostgreSQL and Redis"]
 async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool) {
-    let app = build_router(state(pool.clone()).await);
+    let state = state(pool.clone()).await;
+    let redis = state.redis.clone();
+    let app = build_router(state);
     let id = Uuid::new_v4();
-    let (status, auth) = call(&app, "POST", "/auth/register", serde_json::json!({
-        "phone": "0901234567", "email": format!("{id}@example.com"), "password": "valid-password-123"
-    }), None).await;
+    let email = format!("{id}@example.com");
+    let (status, pending) = call(
+        &app,
+        "POST",
+        "/auth/register",
+        serde_json::json!({ "phone": "0901234567", "email": email, "password": "valid-password-123" }),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{pending}");
+    assert!(pending["message"]
+        .as_str()
+        .unwrap()
+        .contains("Verify your email"));
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{email}"))
+        .await
+        .unwrap();
+    let (status, auth) = call(
+        &app,
+        "POST",
+        "/auth/verify-registration",
+        serde_json::json!({
+            "email": email, "code": code,
+        }),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{auth}");
     let token = auth["access_token"].as_str().unwrap();
     assert_eq!(

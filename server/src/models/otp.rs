@@ -16,8 +16,6 @@ pub struct SendOtpRequest {
 pub struct VerifyOtpRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
-    #[validate(custom(function = "is_valid_vn_phone"))]
-    pub phone: String,
     #[validate(length(min = 6, max = 6))]
     pub code: String,
 }
@@ -41,6 +39,27 @@ pub struct RegisterRequest {
     pub avatar_url: Option<String>,
     #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
     pub password: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct EmailRequest {
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct VerifyRegistrationRequest {
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+    #[validate(length(min = 6, max = 6))]
+    pub code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegistrationPending {
+    pub email: String,
+    pub expires_in: i64,
+    pub message: &'static str,
 }
 
 #[derive(Debug, Deserialize, Validate)]

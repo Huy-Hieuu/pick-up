@@ -7,8 +7,9 @@ use uuid::Uuid;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::models::otp::{
-    LoginRequest, RegisterRequest, SetNewPasswordRequest, SetNewPasswordResponse, VerifyOtpRequest,
-    VerifyResetOtpRequest, VerifyResetOtpResponse,
+    EmailRequest, LoginRequest, RegisterRequest, RegistrationPending, SetNewPasswordRequest,
+    SetNewPasswordResponse, VerifyOtpRequest, VerifyRegistrationRequest, VerifyResetOtpRequest,
+    VerifyResetOtpResponse,
 };
 use crate::models::user::{AuthResponse, PatchValue, UpdateProfileRequest, UserProfile};
 
@@ -16,10 +17,14 @@ pub struct AuthService;
 
 impl AuthService {
     pub async fn send_otp(
+        pool: &PgPool,
         redis: &ConnectionManager,
         email: &str,
         ttl_seconds: i64,
     ) -> AppResult<()> {
+        if !db::email_is_verified(pool, email).await? {
+            return Err(AppError::Unauthorized("Invalid email or password".into()));
+        }
         super::auth_security::send_otp(redis, email, "login", ttl_seconds).await
     }
 
@@ -37,6 +42,9 @@ impl AuthService {
         let user = db::find_user_by_email(pool, &req.email)
             .await?
             .ok_or_else(|| AppError::Unauthorized("Invalid or expired OTP".into()))?;
+        if !db::email_is_verified(pool, &req.email).await? {
+            return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+        }
         super::auth_security::consume_otp(redis, &req.email, "login", &req.code, max_attempts)
             .await?;
         super::auth_security::issue_tokens(
@@ -105,11 +113,10 @@ impl AuthService {
 
     pub async fn register(
         pool: &PgPool,
+        redis: &ConnectionManager,
         req: RegisterRequest,
-        jwt_secret: &str,
-        access_ttl_minutes: i64,
-        refresh_ttl_days: i64,
-    ) -> AppResult<AuthResponse> {
+        otp_ttl_seconds: i64,
+    ) -> AppResult<RegistrationPending> {
         if db::find_user_by_email(pool, &req.email).await?.is_some() {
             return Err(AppError::Conflict("Email already registered".into()));
         }
@@ -119,7 +126,7 @@ impl AuthService {
         } else {
             req.phone.clone()
         };
-        let user = db::create_user(
+        db::create_user(
             pool,
             &phone,
             &req.email,
@@ -128,6 +135,56 @@ impl AuthService {
             req.avatar_url.as_deref(),
         )
         .await?;
+        super::auth_security::send_registration_otp(pool, redis, &req.email, otp_ttl_seconds)
+            .await?;
+        Ok(RegistrationPending {
+            email: req.email,
+            expires_in: otp_ttl_seconds,
+            message: "Verify your email to activate your account",
+        })
+    }
+
+    pub async fn resend_registration_otp(
+        pool: &PgPool,
+        redis: &ConnectionManager,
+        req: EmailRequest,
+        ttl_seconds: i64,
+    ) -> AppResult<()> {
+        super::auth_security::limit_attempts(
+            redis,
+            &format!("registration:request:{}", req.email),
+            1,
+            60,
+        )
+        .await?;
+        super::auth_security::send_registration_otp(pool, redis, &req.email, ttl_seconds).await
+    }
+
+    pub async fn verify_registration_otp(
+        pool: &PgPool,
+        redis: &ConnectionManager,
+        req: VerifyRegistrationRequest,
+        max_attempts: i16,
+        jwt_secret: &str,
+        access_ttl_minutes: i64,
+        refresh_ttl_days: i64,
+    ) -> AppResult<AuthResponse> {
+        if db::email_is_verified(pool, &req.email).await? {
+            return Err(AppError::Conflict("This email is already verified".into()));
+        }
+        super::auth_security::consume_otp(
+            redis,
+            &req.email,
+            "registration",
+            &req.code,
+            max_attempts,
+        )
+        .await?;
+        let user = db::verify_user_email(pool, &req.email)
+            .await?
+            .ok_or_else(|| {
+                AppError::Unauthorized("Invalid or expired verification request".into())
+            })?;
         super::auth_security::issue_tokens(
             pool,
             user,
@@ -185,7 +242,7 @@ impl AuthService {
         // Apply the same response and cooldown to known and unknown addresses.
         super::auth_security::limit_attempts(redis, &format!("reset:request:{email}"), 1, 60)
             .await?;
-        if db::find_user_by_email(pool, email).await?.is_some() {
+        if db::email_is_verified(pool, email).await? {
             super::auth_security::send_otp(redis, email, "reset", ttl_seconds).await?;
         }
         Ok(())
@@ -200,6 +257,9 @@ impl AuthService {
     ) -> AppResult<VerifyResetOtpResponse> {
         super::auth_security::consume_otp(redis, &req.email, "reset", &req.code, max_attempts)
             .await?;
+        if !db::email_is_verified(pool, &req.email).await? {
+            return Err(AppError::Unauthorized("Invalid or expired OTP".into()));
+        }
         let user = db::find_user_by_email(pool, &req.email)
             .await?
             .ok_or_else(|| AppError::Unauthorized("Invalid or expired OTP".into()))?;

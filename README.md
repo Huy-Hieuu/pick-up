@@ -85,7 +85,7 @@ Remaining launch gates:
 - PSP sandbox acceptance, provider status-query reconciliation, refunds,
   chargebacks and real-credential rollout. Complete those checks before accepting
   real money.
-- Verified registration/contact ownership and IP/global ingress rate limiting.
+- Phone-number ownership verification and IP/global ingress rate limiting.
 - SMTP delivery must still be tested with your provider; monitor the bounded,
   redacted `email:dead` list. Compose enables Redis Append Only File persistence;
   production Redis needs equivalent durable storage and recovery.

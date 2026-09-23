@@ -1,19 +1,26 @@
 # Phase 1 — Auth Service
 
-Phone OTP authentication with JWT token management. Users authenticate with their phone number — no passwords, no social login. This matches Vietnamese user behavior (phone-first) and keeps the onboarding friction minimal.
+Email and password authentication with email OTP verification and JWT sessions.
+Phone numbers are collected during registration but their ownership is not
+verified by the current flow.
 
 ---
 
 ## API Endpoints
 
+> Email/password registration now requires `POST /auth/verify-registration`
+> before issuing a session. `POST /auth/resend-registration-otp` requests a
+> replacement code. See [current auth session and rollout behavior](backend-security.md).
+
 ### POST /auth/otp — Request OTP
 
-Sends a 6-digit OTP to the given phone number via SMS.
+Sends a 6-digit OTP to the email of an already verified account. Registration
+and password-reset OTPs use their own purposes and cannot be substituted here.
 
 **Request:**
 ```json
 {
-  "phone": "+84901234567"
+  "email": "player@example.com"
 }
 ```
 
@@ -26,16 +33,14 @@ Sends a 6-digit OTP to the given phone number via SMS.
 ```
 
 **Errors:**
-- `422` — invalid phone format
-- `429` — rate limited (max 1 OTP per 60 seconds per phone)
+- `401` — no verified account for this email
+- `429` — rate limited
 
 **Flow:**
-1. Validate phone format (Vietnamese: `+84` prefix, 9-10 digits after)
-2. Check rate limit: if an unexpired OTP exists for this phone created within the last 60 seconds, return 429
-3. Generate 6-digit random code
-4. Store in `otp_codes` table with 5-minute expiry
-5. Send via SMS provider (in dev mode, log to console)
-6. Return 202
+1. Validate the email and account's verified status
+2. Atomically enforce a 60-second cooldown, store a purpose-specific OTP in
+   Redis and enqueue the email
+3. Return 200 after the job is persisted in Redis
 
 ---
 
@@ -46,7 +51,7 @@ Verifies the OTP and returns JWT tokens. Creates the user on first login.
 **Request:**
 ```json
 {
-  "phone": "+84901234567",
+  "email": "player@example.com",
   "code": "123456"
 }
 ```
@@ -71,16 +76,38 @@ Verifies the OTP and returns JWT tokens. Creates the user on first login.
 - `422` — missing fields
 
 **Flow:**
-1. Find the latest unexpired OTP for this phone
+1. Find the latest unexpired OTP for this email
 2. If no OTP found or expired → 401
 3. Increment `attempts` counter
 4. If `attempts > 3` → 401, mark OTP as exhausted
 5. If code doesn't match → 401
 6. Delete the OTP row (consumed)
-7. Upsert user: find by phone, or create with `display_name = null`
+7. Require an existing verified account
 8. Generate access token (15 min TTL) and refresh token (30 day TTL)
 9. Store refresh token hash in database (for revocation)
 10. Return tokens + user profile
+
+### POST /auth/register — Register with email and password
+
+Creates an **unverified** user and emails a registration OTP. Returns `202
+Accepted` with `email`, `expires_in`, and a verification message. No access,
+refresh, or other session token is issued yet.
+
+### POST /auth/verify-registration — Activate registration
+
+Request body: `{"email":"player@example.com","code":"123456"}`. A valid,
+single-use registration-purpose OTP marks the email verified and returns the
+normal auth response with a new session. Attempts and expiry use the same OTP
+limits as login.
+
+### POST /auth/resend-registration-otp — Resend verification
+
+Request body: `{"email":"player@example.com"}`. The response is generic for
+unknown/already-verified addresses; requests are rate-limited. Resend does not
+change account details or issue a session.
+
+Migration `20260923000005_verify_account_email.sql` logs out existing accounts
+with an email so they can prove ownership before obtaining a new session.
 
 ---
 

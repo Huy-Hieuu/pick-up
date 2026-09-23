@@ -31,7 +31,33 @@
               "mode": "raw",
               "raw": "{\n  \"phone\": \"0909123123\",\n  \"email\": \"test@example.com\",\n  \"display_name\": \"John Doe\",\n  \"password\": \"password123\"\n}"
             },
-            "description": "Register new user. Returns access_token + refresh_token.\n\n- phone: Vietnamese format (10 digits)\n- email: valid email\n- password: 8–128 characters"
+            "description": "Returns 202 and sends a registration OTP. No access or refresh token is issued until /auth/verify-registration succeeds."
+          }
+        },
+        {
+          "name": "POST /auth/verify-registration",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify-registration",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
+            },
+            "description": "Consumes a single-use registration OTP, verifies the email, and returns access/refresh tokens."
+          }
+        },
+        {
+          "name": "POST /auth/resend-registration-otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/resend-registration-otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            },
+            "description": "Requests a registration OTP. The response is generic for unknown and already verified emails."
           }
         },
         {
@@ -44,7 +70,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
             },
-            "description": "Login. 5 failed attempts → 5 min lockout."
+            "description": "Verified email + password login. Unverified accounts cannot create sessions. Five attempts are allowed per 5-minute window."
           }
         },
         {
@@ -68,9 +94,9 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"test@example.com\",\n  \"phone\": \"0909123123\",\n  \"code\": \"123456\"\n}"
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
             },
-            "description": "Verify OTP. Max 3 attempts. Returns access_token + refresh_token.\n\nRequires existing account (no auto-creation)."
+            "description": "Sign in to an already verified account by consuming a purpose-specific email OTP. Max 3 attempts."
           }
         },
         {
