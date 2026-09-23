@@ -17,21 +17,20 @@ If every current player is paid but a balance remains, `remaining_total` exposes
 it; nobody's settled payment is silently increased. Overpayment requires manual
 reconciliation and produces a conflict rather than a negative share.
 
-Pending provider transactions are not yet supported as collectible charges.
-Payment initiation and Momo/ZaloPay callbacks return **501**, do not acknowledge
-successful processing, and do not mutate payment records. Completing these
-integrations requires signed requests/webhooks, fixed in-flight amounts,
-idempotency, retry/reconciliation and refund policies, and sandbox tests.
+Fixed-amount MoMo/ZaloPay order creation and signed callbacks are implemented.
+Pending attempts lock roster changes; disputed/late captures stop split
+calculation. See the [payment protocol, migrations and remaining launch
+checks](backend-payments.md).
 
-Cancellation is blocked while pending or paid payments exist. Reconcile/refund
+Cancellation is blocked while pending, paid, or disputed payments exist. Reconcile/refund
 them first. Cancelled games preserve history and no longer prevent slot reuse.
 
-The new unique index rejects multiple pending/paid rows for one game/player.
+The new unique index rejects multiple pending, paid, or disputed rows for one game/player.
 Before applying it to an existing database, check for legacy duplicates:
 
 ```sql
 SELECT game_id, user_id, count(*)
-FROM payments WHERE status IN ('pending', 'paid')
+FROM payments WHERE status IN ('pending', 'paid', 'disputed')
 GROUP BY game_id, user_id HAVING count(*) > 1;
 ```
 

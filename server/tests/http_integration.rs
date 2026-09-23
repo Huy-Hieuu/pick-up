@@ -12,9 +12,23 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod payment;
 mod realtime;
 
 async fn state(pool: PgPool) -> AppState {
+    state_with_payment_endpoints(
+        pool,
+        "https://test-payment.momo.vn/v2/gateway/api/create".into(),
+        "https://sb-openapi.zalopay.vn/v2/create".into(),
+    )
+    .await
+}
+
+async fn state_with_payment_endpoints(
+    pool: PgPool,
+    momo_endpoint: String,
+    zalopay_endpoint: String,
+) -> AppState {
     let redis_url = std::env::var("TEST_REDIS_URL").expect("TEST_REDIS_URL required");
     let redis = redis::Client::open(redis_url.as_str())
         .unwrap()
@@ -26,6 +40,8 @@ async fn state(pool: PgPool) -> AppState {
             host: "127.0.0.1".into(),
             port: 8080,
             cors_origins: vec!["https://app.example.com".into()],
+            public_app_url: "https://app.example.com".into(),
+            public_api_url: "https://api.example.com".into(),
         },
         database: DatabaseSettings {
             url: String::new(),
@@ -57,16 +73,16 @@ async fn state(pool: PgPool) -> AppState {
             sender: String::new(),
         },
         momo: MomoSettings {
-            partner_code: String::new(),
-            access_key: String::new(),
-            secret_key: String::new(),
-            endpoint: String::new(),
+            partner_code: "TEST_PARTNER".into(),
+            access_key: "test_access_key".into(),
+            secret_key: "test_secret_key".into(),
+            endpoint: momo_endpoint,
         },
         zalopay: ZaloPaySettings {
-            app_id: String::new(),
-            key1: String::new(),
-            key2: String::new(),
-            endpoint: String::new(),
+            app_id: "2553".into(),
+            key1: "test_key1".into(),
+            key2: "test_key2".into(),
+            endpoint: zalopay_endpoint,
         },
         s3: S3Settings {
             endpoint: "http://localhost:9000".into(),
@@ -143,7 +159,7 @@ async fn router_enforces_auth_and_responds_to_health_and_body_limits(pool: PgPoo
         call(&app, "POST", "/webhooks/momo", serde_json::json!({}), None)
             .await
             .0,
-        StatusCode::NOT_IMPLEMENTED
+        StatusCode::BAD_REQUEST
     );
     let response = app
         .clone()

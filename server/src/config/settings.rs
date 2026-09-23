@@ -22,6 +22,8 @@ pub struct AppSettings {
     pub host: String,
     pub port: u16,
     pub cors_origins: Vec<String>,
+    pub public_app_url: String,
+    pub public_api_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +110,8 @@ impl Settings {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect(),
+                public_app_url: public_https_url("APP_PUBLIC_URL", "https://pickup.app")?,
+                public_api_url: public_https_url("APP_PUBLIC_API_URL", "https://api.pickup.app")?,
             },
             database: DatabaseSettings {
                 url: env::var("DATABASE_URL")
@@ -223,4 +227,20 @@ impl Settings {
         };
         Ok(settings)
     }
+}
+
+fn public_https_url(name: &str, default: &str) -> anyhow::Result<String> {
+    let value = env::var(name).unwrap_or_else(|_| default.to_owned());
+    let parsed = url::Url::parse(&value).map_err(|e| anyhow::anyhow!("{name} is invalid: {e}"))?;
+    let is_local_http = parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    anyhow::ensure!(
+        parsed.scheme() == "https" || is_local_http,
+        "{name} must use HTTPS (HTTP is allowed only for localhost)"
+    );
+    anyhow::ensure!(
+        parsed.host_str().is_some() && parsed.username().is_empty() && parsed.password().is_none(),
+        "{name} must be an absolute URL without embedded credentials"
+    );
+    Ok(value.trim_end_matches('/').to_owned())
 }

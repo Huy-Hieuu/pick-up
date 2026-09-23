@@ -55,12 +55,12 @@ The PostgreSQL role needs `CREATEDB`; SQLx creates isolated databases and applie
 all migrations. CI runs these integration tests plus formatting, strict Clippy,
 and the release container build. `Cargo.lock` is tracked; use `--locked`.
 
-Dependency auditing uses `cargo audit --ignore RUSTSEC-2023-0071`. The single
-exception is RSA pulled into the lockfile by SQLx's **disabled MySQL backend**;
-it is absent from the compiled graph (`cargo tree --target all`). CI first
-asserts that neither `rsa` nor `sqlx-mysql` is compiled. Remove and re-evaluate
-this exception before enabling MySQL or any RSA dependency. Plain `cargo audit`
-still reports that lockfile advisory. AWS legacy HTTP/TLS features are disabled.
+Dependency auditing uses a narrow exception because the lockfile retains RSA
+via SQLx's disabled MySQL backend. CI checks `cargo tree --target all` and fails
+if RSA, MySQL, or Quinn becomes compiled. Re-evaluate the RSA exception before
+enabling those features. Plain `cargo audit` reports that lockfile advisory; the
+compiled dependency graph is checked separately. AWS legacy HTTP/TLS features
+are disabled.
 See [RustSec's RSA advisory](https://rustsec.org/advisories/RUSTSEC-2023-0071.html)
 and [SQLx feature documentation](https://docs.rs/sqlx/0.8.6/sqlx/).
 
@@ -72,15 +72,17 @@ strings so WebSocket bearer tokens are not logged.
 ## Release status
 
 This is a hardened backend foundation, **not yet a complete production release**.
-See [authentication changes](docs/backend-security.md) and
-[billing behavior and migration checks](docs/backend-billing.md).
+See [authentication changes](docs/backend-security.md),
+[billing behavior and migration checks](docs/backend-billing.md), and the
+[payment protocol and remaining launch checks](docs/backend-payments.md).
 The [real-time lobby protocol](docs/backend-realtime.md) documents committed
 cross-instance updates, connection/access limits, and reconnect behavior.
 
 Remaining launch gates:
 
-- Momo/ZaloPay initiation, authenticated callbacks, reconciliation, retries and
-  refunds. These endpoints deliberately return 501 until implemented/tested.
+- PSP sandbox acceptance, provider status-query reconciliation, refunds,
+  chargebacks and real-credential rollout. Complete those checks before accepting
+  real money.
 - Verified registration/contact ownership and IP/global ingress rate limiting.
 - Durable email acknowledgement/recovery: the current list queue can lose an
   in-flight job if a process crashes after popping it. SMTP delivery must be

@@ -38,6 +38,12 @@ pub enum AppError {
     #[error("Too many requests: {0}")]
     TooManyRequests(String),
 
+    #[error("Payment provider unavailable")]
+    PaymentGateway,
+
+    #[error("Payment provider rejected the order")]
+    PaymentRejected,
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 
@@ -82,6 +88,16 @@ impl IntoResponse for AppError {
                 StatusCode::TOO_MANY_REQUESTS,
                 "TOO_MANY_REQUESTS",
                 msg.clone(),
+            ),
+            AppError::PaymentGateway => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_GATEWAY",
+                "Payment provider unavailable".into(),
+            ),
+            AppError::PaymentRejected => (
+                StatusCode::BAD_GATEWAY,
+                "PAYMENT_REJECTED",
+                "Payment order could not be created".into(),
             ),
             AppError::Internal(err) => {
                 tracing::error!("Internal error: {err:#}");

@@ -35,6 +35,8 @@ async fn initiate_payment(
     Path(game_id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<InitiatePaymentRequest>,
 ) -> AppResult<Json<PaymentResponse>> {
-    let payment = PaymentService::initiate(&state.pool, game_id, auth.user_id(), req).await?;
+    let payment =
+        PaymentService::initiate(&state.pool, &state.settings, game_id, auth.user_id(), req)
+            .await?;
     Ok(Json(payment))
 }

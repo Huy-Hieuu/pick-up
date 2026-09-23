@@ -59,6 +59,17 @@ impl BillSplitService {
         if status == GameStatus::Cancelled {
             return Err(AppError::Conflict("Cancelled games are not payable".into()));
         }
+        let disputed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status = 'disputed')",
+        )
+        .bind(game_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        if disputed {
+            return Err(AppError::Conflict(
+                "Payment requires manual reconciliation".into(),
+            ));
+        }
         // Include paid players who left: their contribution is still part of the bill.
         let players: Vec<SplitPlayer> = sqlx::query_as(r#"
             SELECT u.id AS user_id, u.display_name,

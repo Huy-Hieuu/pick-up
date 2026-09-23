@@ -4,6 +4,7 @@ pub mod bill_split;
 pub mod court;
 pub mod game;
 pub mod payment;
+pub mod payment_provider;
 pub mod upload;
 
 pub use auth::AuthService;

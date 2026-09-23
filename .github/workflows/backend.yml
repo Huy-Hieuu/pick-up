@@ -41,8 +41,8 @@ jobs:
       - name: Verify advisory exception is unreachable
         run: |
           dependencies="$(cargo +1.98.1 tree --locked --target all --edges normal,build --prefix none)"
-          if printf '%s\n' "$dependencies" | grep -E '^(rsa|sqlx-mysql) v'; then
-            echo 'RSA/MySQL is now compiled; remove and re-evaluate the audit exception.'
+          if printf '%s\n' "$dependencies" | grep -E '^(rsa|sqlx-mysql|quinn|quinn-proto) v'; then
+            echo 'An advisory-exception dependency is now compiled; remove and re-evaluate the audit exception.'
             exit 1
           fi
       - run: cargo +1.98.1 install cargo-audit --version 0.22.2 --locked

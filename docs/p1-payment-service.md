@@ -1,5 +1,10 @@
 # Phase 1 — Payment Service
 
+> This is the original product/API sketch. The backend implements signed order
+> creation, callbacks, idempotency, expiry and dispute handling as described in
+> [the current payment protocol](backend-payments.md). Use that document for
+> field names, behavior and remaining sandbox/refund launch work.
+
 Bill splitting is the #1 viral growth hook. It solves the real-world pain of "who owes what" after playing sports together. Every design decision here optimizes for low friction, real-time visibility, and social pressure to pay.
 
 ---

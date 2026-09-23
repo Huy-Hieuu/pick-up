@@ -236,6 +236,14 @@ impl GameService {
         if game.status != GameStatus::Open {
             return Err(AppError::Conflict("Game is not open for joining".into()));
         }
+        let pending_payment: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'disputed'))"
+        ).bind(game_id).fetch_one(&mut *tx).await?;
+        if pending_payment {
+            return Err(AppError::Conflict(
+                "Player changes are locked while a payment is pending or disputed".into(),
+            ));
+        }
 
         // 2. Check user is not already a player (inside tx).
         let existing = db::games::find_game_player_tx(&mut tx, game_id, user_id).await?;
@@ -300,6 +308,14 @@ impl GameService {
                 game.status
             )));
         }
+        let pending_payment: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'disputed'))"
+        ).bind(game_id).fetch_one(&mut *tx).await?;
+        if pending_payment {
+            return Err(AppError::Conflict(
+                "Player changes are locked while a payment is pending or disputed".into(),
+            ));
+        }
 
         // Check user is a member (inside tx). If not, remove_game_player
         // will return RowNotFound.
@@ -336,7 +352,7 @@ impl GameService {
             _ => {}
         }
 
-        let unsettled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'paid'))")
+        let unsettled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE game_id = $1 AND status IN ('pending', 'paid', 'disputed'))")
             .bind(game_id).fetch_one(&mut *tx).await?;
         if unsettled {
             return Err(AppError::Conflict(

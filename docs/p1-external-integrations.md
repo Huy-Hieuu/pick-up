@@ -1,5 +1,10 @@
 # Phase 1 — External Integrations
 
+> MoMo and ZaloPay order/callback fields and signatures below are the original
+> integration sketch. The implementation follows the current PSP contracts
+> linked from [the backend payment protocol](backend-payments.md); that document
+> records the fields and settlement behavior currently implemented.
+
 Third-party services used in P1: SMS for OTP, Momo/ZaloPay for payments, Google Maps for court display, Zalo for game sharing.
 
 ---
