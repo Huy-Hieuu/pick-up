@@ -37,7 +37,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio
+    image: ${MINIO_IMAGE:-quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
     container_name: pickup-minio
     restart: unless-stopped
     ports:
@@ -51,12 +51,13 @@ services:
     command: server /data --console-address ":9001"
 
   minio-init:
-    image: minio/mc
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727}
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - ./scripts/init-mc.sh:/init-mc.sh:ro
+      - ./scripts/media-public-policy.json:/media-public-policy.json:ro
     entrypoint: ["/bin/sh", "/init-mc.sh"]
     depends_on: [minio]
 

@@ -105,6 +105,15 @@ impl AuthService {
         user_id: Uuid,
         req: UpdateProfileRequest,
     ) -> AppResult<UserProfile> {
+        if let PatchValue::Value(url) = &req.avatar_url {
+            let approved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM avatar_uploads WHERE user_id = $1 AND public_url = $2)")
+                .bind(user_id).bind(url).fetch_one(pool).await?;
+            if !approved {
+                return Err(AppError::BadRequest(
+                    "Complete an avatar upload before assigning its URL".into(),
+                ));
+            }
+        }
         // Trim display_name; convert empty string to Null.
         let display_name = match &req.display_name {
             PatchValue::Value(s) => {
@@ -180,6 +189,11 @@ impl AuthService {
         access_ttl_minutes: i64,
         refresh_ttl_days: i64,
     ) -> AppResult<AuthResponse> {
+        if req.avatar_url.is_some() {
+            return Err(AppError::BadRequest(
+                "Upload and validate your avatar after registration".into(),
+            ));
+        }
         super::auth_security::consume_otp(
             redis,
             &req.email,

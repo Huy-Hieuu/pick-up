@@ -36,7 +36,7 @@ Redis, but creates no user and reserves no phone number. Legacy registration
 fields sent by older clients are ignored.
 
 `POST /auth/verify-registration` requires `email`, `code`, `password`, `phone`,
-and optional `display_name` / `avatar_url`. Only the email owner submitting a
+and optional `display_name`. Only the email owner submitting a
 valid code can create the verified account and set these fields. The mobile
 client must send those fields with verification, not the initial request.
 Verification of legacy unverified accounts replaces their credentials/profile
@@ -51,6 +51,8 @@ can start a fresh signup for an unknown email. Invalid verification requests
 do not disclose whether an account is verified. Phone ownership is still not
 proved: do not use the phone for login, recovery, or authorization. The OTP
 and outbound email queue in Redis are sensitive infrastructure.
+Avatars must be uploaded and validated after signup; arbitrary external avatar
+URLs are rejected. See the [upload contract](backend-uploads.md).
 
 Migration `20260923000005_verify_account_email.sql` marks legacy email addresses
 unverified and revokes their existing sessions. Those users must verify their

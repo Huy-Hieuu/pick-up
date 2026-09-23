@@ -12,6 +12,6 @@ echo "MinIO is ready. Starting initialization..."
 # Create bucket if not exists
 mc mb local/pickup-media --ignore-existing
 
-mc anonymous set download local/pickup-media
+mc anonymous set-json /media-public-policy.json local/pickup-media
 
-echo "MinIO bucket initialized: public reads, authenticated uploads only"
+echo "MinIO initialized: only sanitized avatars are public; quarantine and legacy objects remain private"

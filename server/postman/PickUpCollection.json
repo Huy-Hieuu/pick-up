@@ -467,7 +467,20 @@
               "mode": "raw",
               "raw": "{\n  \"content_type\": \"image/jpeg\",\n  \"content_length\": 245760\n}"
             },
-            "description": "Get a presigned S3 upload URL for an avatar. The signed PUT requires exactly content_length bytes and the declared Content-Type. Size must be 1 byte–8 MiB. Rate limited: 5 requests/min per user. URL expires in 15 minutes."
+            "description": "Get a presigned PUT to private quarantine. Send exact content_length and Content-Type, then POST /upload/avatar/complete with upload_id to validate the image and obtain its public URL. Size is 1 byte–8 MiB; 5 URLs per user per minute; URLs expire in 15 minutes."
+          }
+        },
+        {
+          "name": "POST /upload/avatar/complete",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/upload/avatar/complete",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"upload_id\": \"REPLACE_WITH_UPLOAD_ID\"\n}" },
+            "description": "Validates and re-encodes your quarantined image. Returns public_url on success; assign it via PATCH /auth/me. Completion is idempotent."
           }
         }
       ]

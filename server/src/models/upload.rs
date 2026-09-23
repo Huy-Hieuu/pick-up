@@ -20,9 +20,9 @@ pub struct GetPresignedUrlRequest {
 
 #[derive(Debug, Serialize)]
 pub struct GetPresignedUrlResponse {
+    pub upload_id: uuid::Uuid,
     pub upload_url: String,
     pub object_key: String,
-    pub public_url: String,
     pub expires_secs: u64,
     pub content_length: u64,
     pub max_upload_bytes: u64,
@@ -55,12 +55,22 @@ impl GetPresignedUrlRequest {
 impl GetPresignedUrlResponse {
     pub fn from_presigned(presigned: PresignedUploadUrl) -> Self {
         Self {
+            upload_id: presigned.upload_id,
             upload_url: presigned.upload_url,
             object_key: presigned.object_key,
-            public_url: presigned.public_url,
             expires_secs: presigned.expires_secs,
             content_length: presigned.content_length,
             max_upload_bytes: MAX_AVATAR_UPLOAD_BYTES,
         }
     }
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CompleteAvatarRequest {
+    pub upload_id: uuid::Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompleteAvatarResponse {
+    pub public_url: String,
 }

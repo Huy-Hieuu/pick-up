@@ -18,6 +18,10 @@ curl --fail http://localhost:8080/health/ready
 The Compose stack is **local development only**: dependencies bind to loopback
 and use development database/storage credentials. Run migrations automatically
 at startup, or set `DB_RUN_MIGRATIONS=false` when deploying migrations separately.
+The MinIO development images are pinned on Quay because the previous Docker Hub
+images are unavailable. They are not a supported production storage deployment;
+use a maintained S3-compatible service and verify its bucket policy. Override
+`MINIO_IMAGE` / `MINIO_MC_IMAGE` only when updating the development images.
 
 To run Rust outside Docker:
 
@@ -29,8 +33,8 @@ cd server
 cargo run --locked
 ```
 
-MinIO initialization permits anonymous **reads only**; uploading requires a signed
-request. `S3_ENDPOINT` is embedded in upload URLs, so it must be reachable by the
+MinIO initialization permits anonymous reads only for sanitized avatars; raw
+uploads are quarantined and require signed requests. `S3_ENDPOINT` is embedded in upload URLs, so it must be reachable by the
 client (not an internal container hostname). For phones on a LAN, adjust it and
 the public media URL appropriately. Never expose the development credentials.
 
@@ -81,7 +85,7 @@ The [email queue operations guide](docs/backend-email.md) covers leases, retries
 and Redis persistence. [API rate limits and proxy trust](docs/backend-rate-limits.md)
 documents the default shared quota and safe reverse-proxy setup.
 The [avatar upload contract](docs/backend-uploads.md) documents the signed
-8 MiB size limit and the mobile client's required PUT headers.
+8 MiB size limit, private quarantine, image validation and the mobile completion step.
 
 Remaining launch gates:
 

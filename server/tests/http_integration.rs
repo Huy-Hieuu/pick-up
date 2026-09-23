@@ -16,6 +16,7 @@ use std::time::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod media;
 mod payment;
 mod realtime;
 
@@ -415,6 +416,12 @@ async fn avatar_upload_signature_binds_exact_length_and_rejects_oversize(pool: P
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["content_length"], 245760);
     assert_eq!(response["max_upload_bytes"], 8 * 1024 * 1024);
+    assert!(response["upload_id"].as_str().is_some());
+    assert!(response.get("public_url").is_none());
+    assert!(response["object_key"]
+        .as_str()
+        .unwrap()
+        .starts_with("quarantine/"));
     let signed = url::Url::parse(response["upload_url"].as_str().unwrap()).unwrap();
     let headers = signed
         .query_pairs()

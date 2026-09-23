@@ -41,6 +41,7 @@ hmac = "0.12"
 sha2 = "0.10"
 subtle = "2.6"
 ipnet = "2"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 lettre = { version = "0.11", features = ["tokio1-native-tls", "smtp-transport", "builder"] }
 argon2 = "0.5"
 hex = "0.4"
