@@ -27,8 +27,9 @@ impl UploadService {
         content_type: &str,
         expires_secs: u64,
     ) -> AppResult<PresignedUploadUrl> {
-        let extension = extension_for_mime(content_type)
-            .ok_or_else(|| AppError::BadRequest(format!("Unsupported content type: {content_type}")))?;
+        let extension = extension_for_mime(content_type).ok_or_else(|| {
+            AppError::BadRequest(format!("Unsupported content type: {content_type}"))
+        })?;
 
         let object_key = format!("avatars/{}/avatar.{}", user_id, extension);
 
@@ -107,7 +108,10 @@ mod tests {
 
     #[test]
     fn strips_boundary_parameter() {
-        assert_eq!(extension_for_mime("image/png; boundary=something"), Some("png"));
+        assert_eq!(
+            extension_for_mime("image/png; boundary=something"),
+            Some("png")
+        );
     }
 
     #[test]
@@ -158,24 +162,22 @@ mod tests {
     fn public_url_no_double_slash() {
         let public_url = "http://localhost:9000/pickup-media";
         let object_key = "avatars/123/avatar.jpg";
-        let url = format!(
-            "{}/{}",
-            public_url.trim_end_matches('/'),
-            object_key
-        );
+        let url = format!("{}/{}", public_url.trim_end_matches('/'), object_key);
         assert!(!url.contains("//pick"));
-        assert_eq!(url, "http://localhost:9000/pickup-media/avatars/123/avatar.jpg");
+        assert_eq!(
+            url,
+            "http://localhost:9000/pickup-media/avatars/123/avatar.jpg"
+        );
     }
 
     #[test]
     fn public_url_trims_trailing_slash() {
         let public_url = "http://localhost:9000/pickup-media/";
         let object_key = "avatars/123/avatar.jpg";
-        let url = format!(
-            "{}/{}",
-            public_url.trim_end_matches('/'),
-            object_key
+        let url = format!("{}/{}", public_url.trim_end_matches('/'), object_key);
+        assert_eq!(
+            url,
+            "http://localhost:9000/pickup-media/avatars/123/avatar.jpg"
         );
-        assert_eq!(url, "http://localhost:9000/pickup-media/avatars/123/avatar.jpg");
     }
 }

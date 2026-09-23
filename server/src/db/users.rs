@@ -16,7 +16,10 @@ pub async fn find_user_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Opti
     .await
 }
 
-pub async fn find_user_by_email_and_password(pool: &PgPool, email: &str) -> sqlx::Result<Option<UserRow>> {
+pub async fn find_user_by_email_and_password(
+    pool: &PgPool,
+    email: &str,
+) -> sqlx::Result<Option<UserRow>> {
     sqlx::query_as::<_, UserRow>(
         "SELECT id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at FROM users WHERE email = $1 AND password_hash IS NOT NULL",
     )
@@ -32,9 +35,14 @@ pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Er
     Ok(password_hash.to_string())
 }
 
-pub fn verify_password(password: &str, password_hash: &str) -> Result<bool, argon2::password_hash::Error> {
+pub fn verify_password(
+    password: &str,
+    password_hash: &str,
+) -> Result<bool, argon2::password_hash::Error> {
     let parsed_hash = PasswordHash::new(password_hash)?;
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_ok())
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
 }
 
 pub async fn find_user_by_id(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<UserRow>> {
@@ -112,7 +120,11 @@ pub async fn update_user_profile_patch(
     .await
 }
 
-pub async fn update_password_hash(pool: &PgPool, user_id: Uuid, password_hash: &str) -> sqlx::Result<UserRow> {
+pub async fn update_password_hash(
+    pool: &PgPool,
+    user_id: Uuid,
+    password_hash: &str,
+) -> sqlx::Result<UserRow> {
     sqlx::query_as::<_, UserRow>(
         r#"
         UPDATE users
@@ -145,7 +157,10 @@ mod tests {
     fn hash_password_uses_random_salts() {
         let h1 = hash_password("samepassword").unwrap();
         let h2 = hash_password("samepassword").unwrap();
-        assert_ne!(h1, h2, "Same password must produce different hashes (random salt)");
+        assert_ne!(
+            h1, h2,
+            "Same password must produce different hashes (random salt)"
+        );
     }
 
     // ── verify_password ────────────────────────────────────────────

@@ -22,7 +22,12 @@ pub struct GetPresignedUrlResponse {
 impl GetPresignedUrlRequest {
     pub fn validate_content_type(&self) -> AppResult<()> {
         // Strip parameters (e.g., "; charset=utf-8") before checking.
-        let base_type = self.content_type.split(';').next().unwrap_or(&self.content_type).trim();
+        let base_type = self
+            .content_type
+            .split(';')
+            .next()
+            .unwrap_or(&self.content_type)
+            .trim();
         if !ALLOWED_CONTENT_TYPES.contains(&base_type) {
             return Err(crate::error::AppError::BadRequest(format!(
                 "Invalid content type. Allowed: {:?}",

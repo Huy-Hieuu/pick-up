@@ -58,8 +58,7 @@ async fn book_slot(
     Path((court_id, slot_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<BookSlotRequest>,
 ) -> AppResult<Json<BookedSlotResponse>> {
-    let slot =
-        CourtService::book_slot(&state.pool, court_id, slot_id, auth.user_id(), req).await?;
+    let slot = CourtService::book_slot(&state.pool, court_id, slot_id, auth.user_id(), req).await?;
     Ok(Json(slot))
 }
 
@@ -69,7 +68,6 @@ async fn cancel_booking(
     auth: AuthUser,
     Path((court_id, slot_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<BookedSlotResponse>> {
-    let slot =
-        CourtService::cancel_booking(&state.pool, court_id, slot_id, auth.user_id()).await?;
+    let slot = CourtService::cancel_booking(&state.pool, court_id, slot_id, auth.user_id()).await?;
     Ok(Json(slot))
 }

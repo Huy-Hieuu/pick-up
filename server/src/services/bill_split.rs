@@ -174,11 +174,23 @@ mod tests {
         let creator = Uuid::from_u128(1);
         for total in [0, 1, 29, 600_001, i32::MAX] {
             for count in 1..=30 {
-                let players = (1..=count).map(|id| SplitPlayer {
-                    user_id: Uuid::from_u128(id), display_name: None, active: true, paid_amount: 0,
-                }).collect();
+                let players = (1..=count)
+                    .map(|id| SplitPlayer {
+                        user_id: Uuid::from_u128(id),
+                        display_name: None,
+                        active: true,
+                        paid_amount: 0,
+                    })
+                    .collect();
                 let result = split_players(total, creator, players).unwrap();
-                assert_eq!(result.payments.iter().map(|p| i64::from(p.amount)).sum::<i64>(), i64::from(total));
+                assert_eq!(
+                    result
+                        .payments
+                        .iter()
+                        .map(|p| i64::from(p.amount))
+                        .sum::<i64>(),
+                    i64::from(total)
+                );
                 assert!(result.payments.iter().all(|p| p.amount >= 0));
             }
         }
@@ -186,18 +198,31 @@ mod tests {
 
     #[test]
     fn overpayment_fails_closed_without_integer_overflow() {
-        let players = (1..=2).map(|id| SplitPlayer {
-            user_id: Uuid::from_u128(id), display_name: None, active: true, paid_amount: i64::from(i32::MAX),
-        }).collect();
+        let players = (1..=2)
+            .map(|id| SplitPlayer {
+                user_id: Uuid::from_u128(id),
+                display_name: None,
+                active: true,
+                paid_amount: i64::from(i32::MAX),
+            })
+            .collect();
         assert!(split_players(i32::MAX, Uuid::from_u128(1), players).is_err());
     }
 
     #[test]
     fn fully_paid_members_are_never_recharged_for_a_deficit() {
         let creator = Uuid::new_v4();
-        let result = split_players(100, creator, vec![SplitPlayer {
-            user_id: creator, display_name: None, active: true, paid_amount: 50,
-        }]).unwrap();
+        let result = split_players(
+            100,
+            creator,
+            vec![SplitPlayer {
+                user_id: creator,
+                display_name: None,
+                active: true,
+                paid_amount: 50,
+            }],
+        )
+        .unwrap();
         assert_eq!(result.remaining_total, 50);
         assert_eq!(result.payments[0].amount, 50);
         assert_eq!(result.per_player, 0);

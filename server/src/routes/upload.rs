@@ -1,13 +1,11 @@
-use axum::{
-    extract::State,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, routing::post, Json, Router};
 
 use crate::error::{AppError, AppResult};
 use crate::extractors::auth::AuthUser;
 use crate::extractors::ValidatedJson;
-use crate::models::upload::{GetPresignedUrlRequest, GetPresignedUrlResponse, PRESIGNED_URL_EXPIRY_SECS};
+use crate::models::upload::{
+    GetPresignedUrlRequest, GetPresignedUrlResponse, PRESIGNED_URL_EXPIRY_SECS,
+};
 use crate::services::upload::UploadService;
 use crate::state::AppState;
 
@@ -36,7 +34,9 @@ pub async fn get_avatar_upload_url(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
     }
     if count > 5 {
-        return Err(AppError::BadRequest("Too many upload requests. Please wait a moment.".into()));
+        return Err(AppError::BadRequest(
+            "Too many upload requests. Please wait a moment.".into(),
+        ));
     }
 
     req.validate_content_type()?;
