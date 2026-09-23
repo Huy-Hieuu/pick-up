@@ -61,7 +61,9 @@ async fn send_otp(
         state.settings.redis.otp_ttl_seconds,
     )
     .await?;
-    Ok(Json(serde_json::json!({ "message": "OTP sent" })))
+    Ok(Json(serde_json::json!({
+        "message": "If the account can receive a code, instructions have been sent"
+    })))
 }
 
 /// `POST /auth/verify` — verify OTP, get JWT tokens.

@@ -198,6 +198,133 @@ async fn router_enforces_auth_and_responds_to_health_and_body_limits(pool: PgPoo
 
 #[sqlx::test]
 #[ignore = "requires disposable PostgreSQL and Redis"]
+async fn login_otp_request_does_not_reveal_account_state(pool: PgPool) {
+    let state = state(pool.clone()).await;
+    let redis = state.redis.clone();
+    let app = build_router(state);
+    let verified_email = format!("{}@example.test", Uuid::new_v4());
+    sqlx::query("INSERT INTO users (phone, email, email_verified) VALUES ($1, $2, TRUE)")
+        .bind(Uuid::new_v4().to_string()[..20].to_owned())
+        .bind(&verified_email)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unknown_email = format!("{}@example.test", Uuid::new_v4());
+
+    let (unknown_status, unknown_body) = call(
+        &app,
+        "POST",
+        "/auth/otp",
+        serde_json::json!({"email": unknown_email}),
+        None,
+    )
+    .await;
+    let (verified_status, verified_body) = call(
+        &app,
+        "POST",
+        "/auth/otp",
+        serde_json::json!({"email": verified_email}),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_status, StatusCode::OK);
+    assert_eq!(verified_status, StatusCode::OK);
+    assert_eq!(unknown_body, verified_body);
+
+    let (unknown_reset_status, unknown_reset_body) = call(
+        &app,
+        "POST",
+        "/auth/forgot-password",
+        serde_json::json!({"email": unknown_email}),
+        None,
+    )
+    .await;
+    let (verified_reset_status, verified_reset_body) = call(
+        &app,
+        "POST",
+        "/auth/forgot-password",
+        serde_json::json!({"email": verified_email}),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_reset_status, StatusCode::OK);
+    assert_eq!(verified_reset_status, StatusCode::OK);
+    assert_eq!(unknown_reset_body, verified_reset_body);
+
+    let (unknown_resend_status, unknown_resend_body) = call(
+        &app,
+        "POST",
+        "/auth/resend-registration-otp",
+        serde_json::json!({"email": unknown_email}),
+        None,
+    )
+    .await;
+    let (verified_resend_status, verified_resend_body) = call(
+        &app,
+        "POST",
+        "/auth/resend-registration-otp",
+        serde_json::json!({"email": verified_email}),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_resend_status, StatusCode::OK);
+    assert_eq!(verified_resend_status, StatusCode::OK);
+    assert_eq!(unknown_resend_body, verified_resend_body);
+
+    let issued_registration_code: String = redis
+        .clone()
+        .get(format!("otp:registration:{unknown_email}"))
+        .await
+        .unwrap();
+    let wrong_code = if issued_registration_code == "000000" {
+        "999999"
+    } else {
+        "000000"
+    };
+    let verify_body = |email: &str| {
+        serde_json::json!({
+            "email": email,
+            "code": wrong_code,
+            "password": "registration-owner-password",
+            "phone": "0907777888",
+        })
+    };
+    let (unknown_verify_status, unknown_verify_body) = call(
+        &app,
+        "POST",
+        "/auth/verify-registration",
+        verify_body(&unknown_email),
+        None,
+    )
+    .await;
+    let (verified_verify_status, verified_verify_body) = call(
+        &app,
+        "POST",
+        "/auth/verify-registration",
+        verify_body(&verified_email),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_verify_status, StatusCode::UNAUTHORIZED);
+    assert_eq!(verified_verify_status, StatusCode::UNAUTHORIZED);
+    assert_eq!(unknown_verify_body, verified_verify_body);
+
+    let unknown_code: Option<String> = redis
+        .clone()
+        .get(format!("otp:login:{unknown_email}"))
+        .await
+        .unwrap();
+    let verified_code: Option<String> = redis
+        .clone()
+        .get(format!("otp:login:{verified_email}"))
+        .await
+        .unwrap();
+    assert!(unknown_code.is_none());
+    assert!(verified_code.is_some());
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
 async fn per_ip_rate_limit_is_shared_and_health_probes_are_exempt(pool: PgPool) {
     let mut state = state(pool).await;
     Arc::make_mut(&mut state.settings).app.requests_per_minute = 2;
@@ -310,9 +437,10 @@ async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool
         &app,
         "POST",
         "/auth/register",
-        serde_json::json!({ "phone": "0901234567", "email": email, "password": "valid-password-123" }),
+        serde_json::json!({ "email": email }),
         None,
-    ).await;
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{pending}");
     assert!(pending["message"]
         .as_str()
@@ -328,7 +456,8 @@ async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool
         "POST",
         "/auth/verify-registration",
         serde_json::json!({
-            "email": email, "code": code,
+            "email": email, "code": code, "password": "verified-test-password-123",
+            "phone": "0901234567",
         }),
         None,
     )

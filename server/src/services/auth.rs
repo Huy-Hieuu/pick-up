@@ -31,10 +31,18 @@ impl AuthService {
         email: &str,
         ttl_seconds: i64,
     ) -> AppResult<()> {
-        if !db::email_is_verified(pool, email).await? {
-            return Err(AppError::Unauthorized("Invalid email or password".into()));
+        // Charge the same per-address request budget before checking account
+        // state so callers cannot use status codes or cooldowns as an oracle.
+        super::auth_security::limit_attempts(redis, &format!("login:otp-request:{email}"), 1, 60)
+            .await?;
+        if db::email_is_verified(pool, email).await? {
+            if let Err(error) =
+                super::auth_security::send_otp(redis, email, "login", ttl_seconds).await
+            {
+                tracing::warn!(%error, "Login OTP was not queued");
+            }
         }
-        super::auth_security::send_otp(redis, email, "login", ttl_seconds).await
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)] // Retain the existing service API for callers.
@@ -126,41 +134,17 @@ impl AuthService {
         req: RegisterRequest,
         otp_ttl_seconds: i64,
     ) -> AppResult<RegistrationPending> {
-        // Perform the same password work for existing and new addresses before
-        // returning a generic response, so registration is not an email oracle.
-        let password_hash = super::auth_security::hash_password(req.password).await?;
+        // Keep Argon2 work independent of whether the email is already
+        // registered, without storing a password before the email is proved.
+        let _ = super::auth_security::hash_password(Uuid::new_v4().to_string()).await?;
         if db::find_user_by_email(pool, &req.email).await?.is_some() {
             return Ok(registration_pending(req.email, otp_ttl_seconds));
         }
-        let phone = if let Some(local) = req.phone.strip_prefix('0') {
-            format!("+84{local}")
-        } else {
-            req.phone.clone()
-        };
-        match db::create_user(
-            pool,
-            &phone,
-            &req.email,
-            Some(&password_hash),
-            req.display_name.as_deref(),
-            req.avatar_url.as_deref(),
-        )
-        .await
+        if let Err(error) =
+            super::auth_security::send_otp(redis, &req.email, "registration", otp_ttl_seconds).await
         {
-            Ok(_) => {}
-            Err(error)
-                if error
-                    .as_database_error()
-                    .is_some_and(|db| db.code().as_deref() == Some("23505")) =>
-            {
-                // Covers a concurrent email or phone registration without
-                // revealing which identifier already belongs to an account.
-                return Ok(registration_pending(req.email, otp_ttl_seconds));
-            }
-            Err(error) => return Err(AppError::Database(error)),
+            tracing::warn!(%error, "Registration OTP was not queued");
         }
-        super::auth_security::send_registration_otp(pool, redis, &req.email, otp_ttl_seconds)
-            .await?;
         Ok(registration_pending(req.email, otp_ttl_seconds))
     }
 
@@ -177,7 +161,14 @@ impl AuthService {
             60,
         )
         .await?;
-        super::auth_security::send_registration_otp(pool, redis, &req.email, ttl_seconds).await
+        if !db::email_is_verified(pool, &req.email).await? {
+            if let Err(error) =
+                super::auth_security::send_otp(redis, &req.email, "registration", ttl_seconds).await
+            {
+                tracing::warn!(%error, "Registration OTP resend was not queued");
+            }
+        }
+        Ok(())
     }
 
     pub async fn verify_registration_otp(
@@ -189,9 +180,6 @@ impl AuthService {
         access_ttl_minutes: i64,
         refresh_ttl_days: i64,
     ) -> AppResult<AuthResponse> {
-        if db::email_is_verified(pool, &req.email).await? {
-            return Err(AppError::Conflict("This email is already verified".into()));
-        }
         super::auth_security::consume_otp(
             redis,
             &req.email,
@@ -200,11 +188,36 @@ impl AuthService {
             max_attempts,
         )
         .await?;
-        let user = db::verify_user_email(pool, &req.email)
+        let password_hash = super::auth_security::hash_password(req.password).await?;
+        let phone = if let Some(local) = req.phone.strip_prefix('0') {
+            format!("+84{local}")
+        } else {
+            req.phone
+        };
+        let user = if db::find_user_by_email(pool, &req.email).await?.is_some() {
+            db::verify_user_email(
+                pool,
+                &req.email,
+                &phone,
+                &password_hash,
+                req.display_name.as_deref(),
+                req.avatar_url.as_deref(),
+            )
             .await?
             .ok_or_else(|| {
                 AppError::Unauthorized("Invalid or expired verification request".into())
-            })?;
+            })?
+        } else {
+            db::create_verified_user(
+                pool,
+                &phone,
+                &req.email,
+                &password_hash,
+                req.display_name.as_deref(),
+                req.avatar_url.as_deref(),
+            )
+            .await?
+        };
         super::auth_security::issue_tokens(
             pool,
             user,
@@ -263,7 +276,11 @@ impl AuthService {
         super::auth_security::limit_attempts(redis, &format!("reset:request:{email}"), 1, 60)
             .await?;
         if db::email_is_verified(pool, email).await? {
-            super::auth_security::send_otp(redis, email, "reset", ttl_seconds).await?;
+            if let Err(error) =
+                super::auth_security::send_otp(redis, email, "reset", ttl_seconds).await
+            {
+                tracing::warn!(%error, "Password-reset OTP was not queued");
+            }
         }
         Ok(())
     }

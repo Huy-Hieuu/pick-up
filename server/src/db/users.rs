@@ -23,16 +23,61 @@ pub async fn email_is_verified(pool: &PgPool, email: &str) -> sqlx::Result<bool>
         .await
 }
 
-pub async fn verify_user_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<UserRow>> {
-    sqlx::query_as::<_, UserRow>(
+pub async fn verify_user_email(
+    pool: &PgPool,
+    email: &str,
+    phone: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+) -> sqlx::Result<Option<UserRow>> {
+    let mut tx = pool.begin().await?;
+    let user = sqlx::query_as::<_, UserRow>(
         r#"
-        UPDATE users SET email_verified = TRUE, updated_at = now()
+        UPDATE users SET email_verified = TRUE, password_hash = $2, phone = $3,
+            display_name = $4, avatar_url = $5, updated_at = now()
         WHERE email = $1 AND email_verified = FALSE
         RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
     "#,
     )
     .bind(email)
-    .fetch_optional(pool)
+    .bind(password_hash)
+    .bind(phone)
+    .bind(display_name)
+    .bind(avatar_url)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(user) = &user {
+        sqlx::query("DELETE FROM auth_sessions WHERE user_id = $1")
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(user)
+}
+
+pub async fn create_verified_user(
+    pool: &PgPool,
+    phone: &str,
+    email: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+) -> sqlx::Result<UserRow> {
+    sqlx::query_as::<_, UserRow>(
+        r#"
+        INSERT INTO users (phone, email, password_hash, display_name, avatar_url, email_verified)
+        VALUES ($1, $2, $3, $4, $5, TRUE)
+        RETURNING id, phone, email, password_hash, display_name, avatar_url, created_at, updated_at
+        "#,
+    )
+    .bind(phone)
+    .bind(email)
+    .bind(password_hash)
+    .bind(display_name)
+    .bind(avatar_url)
+    .fetch_one(pool)
     .await
 }
 

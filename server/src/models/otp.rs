@@ -30,15 +30,8 @@ pub struct RefreshTokenRequest {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct RegisterRequest {
-    #[validate(custom(function = "is_valid_vn_phone"))]
-    pub phone: String,
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
-    #[validate(length(min = 1, max = 50))]
-    pub display_name: Option<String>,
-    pub avatar_url: Option<String>,
-    #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
-    pub password: String,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -53,6 +46,13 @@ pub struct VerifyRegistrationRequest {
     pub email: String,
     #[validate(length(min = 6, max = 6))]
     pub code: String,
+    #[validate(custom(function = "is_valid_vn_phone"))]
+    pub phone: String,
+    #[validate(length(min = 1, max = 50))]
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
+    pub password: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -30,16 +30,27 @@ before serving the new binary. Do not roll back to stateless token validation.
 Schedule `DELETE FROM auth_sessions WHERE expires_at <= now()` for expired-session
 cleanup. Issuing a session also removes that user's expired sessions.
 
-Email/password registration now returns the same 202 message without a session
-for available and already-registered addresses, queues an OTP only for a new
-account, and issues a session only after `POST /auth/verify-registration`
-consumes the single-use code. Duplicate phone/email conflicts also produce the
-generic message. `POST /auth/resend-registration-otp` returns a generic response
-for unknown/already-verified addresses and shares the cooldown. Email login OTP
-and password reset are restricted to verified addresses. Phone numbers still
-aren't verified by the current registration flow, so do not treat the phone as
-proof of identity. The verification OTP/outbound email queue lives in Redis; it
-is sensitive infrastructure.
+`POST /auth/register` accepts only an `email` and returns the same 202 message
+for available and already-registered addresses. It stores a short-lived OTP in
+Redis, but creates no user and reserves no phone number. Legacy registration
+fields sent by older clients are ignored.
+
+`POST /auth/verify-registration` requires `email`, `code`, `password`, `phone`,
+and optional `display_name` / `avatar_url`. Only the email owner submitting a
+valid code can create the verified account and set these fields. The mobile
+client must send those fields with verification, not the initial request.
+Verification of legacy unverified accounts replaces their credentials/profile
+and revokes previous sessions. A code expires and is single-use; retry a failed
+completion by requesting a fresh code. Phone conflicts are checked only after
+email proof, when creating or updating the account.
+
+Resend, login OTP, and password-reset requests return generic responses;
+account-dependent cooldown or queue failures are not exposed. The request
+budget is enforced before checking account eligibility. Registration resends
+can start a fresh signup for an unknown email. Invalid verification requests
+do not disclose whether an account is verified. Phone ownership is still not
+proved: do not use the phone for login, recovery, or authorization. The OTP
+and outbound email queue in Redis are sensitive infrastructure.
 
 Migration `20260923000005_verify_account_email.sql` marks legacy email addresses
 unverified and revokes their existing sessions. Those users must verify their

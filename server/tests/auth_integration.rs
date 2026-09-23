@@ -31,11 +31,7 @@ async fn register(pool: &PgPool) -> pickup_server::models::user::AuthResponse {
         pool,
         &redis,
         RegisterRequest {
-            phone: format!("+849{:08}", id.as_u128() % 100_000_000),
             email: format!("{id}@example.com"),
-            password: "valid-password-123".into(),
-            display_name: None,
-            avatar_url: None,
         },
         300,
     )
@@ -52,6 +48,10 @@ async fn register(pool: &PgPool) -> pickup_server::models::user::AuthResponse {
         VerifyRegistrationRequest {
             email: pending.email.clone(),
             code,
+            password: "valid-password-123".into(),
+            phone: format!("+849{:08}", id.as_u128() % 100_000_000),
+            display_name: None,
+            avatar_url: None,
         },
         3,
         SECRET,
@@ -344,24 +344,18 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
         &pool,
         &redis,
         RegisterRequest {
-            phone: "0901234567".into(),
             email: "local@example.com".into(),
-            password: "valid-password".into(),
-            display_name: None,
-            avatar_url: None,
         },
         300,
     )
     .await
     .unwrap();
-    let verified: bool = sqlx::query_scalar("SELECT email_verified FROM users WHERE email = $1")
-        .bind(&pending.email)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
     assert!(
-        !verified,
-        "registration does not mark an unproved address as verified"
+        db::find_user_by_email(&pool, &pending.email)
+            .await
+            .unwrap()
+            .is_none(),
+        "registration reserves no account or phone before email proof"
     );
     let sessions: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1",
@@ -382,6 +376,10 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
         VerifyRegistrationRequest {
             email: pending.email.clone(),
             code,
+            password: "verified-owner-password".into(),
+            phone: "0901234567".into(),
+            display_name: None,
+            avatar_url: None,
         },
         3,
         SECRET,
@@ -403,6 +401,10 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
         VerifyRegistrationRequest {
             email: pending.email.clone(),
             code: "000000".into(),
+            password: "another-owner-password".into(),
+            phone: "0901234567".into(),
+            display_name: None,
+            avatar_url: None,
         },
         3,
         SECRET,
@@ -416,11 +418,7 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
         &pool,
         &redis,
         RegisterRequest {
-            phone: "0902222333".into(),
             email: pending.email.clone(),
-            password: "another-password".into(),
-            display_name: None,
-            avatar_url: None,
         },
         300,
     )
@@ -428,27 +426,112 @@ async fn registration_preserves_international_phone_and_normalizes_local_phone(p
     .unwrap();
     assert_eq!(duplicate_email.message, pending.message);
     assert_eq!(duplicate_email.email, pending.email);
-    let duplicate_phone = AuthService::register(
+    let another_pending = AuthService::register(
         &pool,
         &redis,
         RegisterRequest {
-            phone: "+84901234567".into(),
             email: "different-address@example.com".into(),
-            password: "another-password".into(),
-            display_name: None,
-            avatar_url: None,
         },
         300,
     )
     .await
     .unwrap();
-    assert_eq!(duplicate_phone.message, pending.message);
+    assert_eq!(another_pending.message, pending.message);
     assert!(
         db::find_user_by_email(&pool, "different-address@example.com")
             .await
             .unwrap()
             .is_none()
     );
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn email_owner_sets_password_when_verifying_registration(pool: PgPool) {
+    let redis = redis().await;
+    let email = format!("{}@example.com", Uuid::new_v4());
+    // Older clients may still submit a password at registration. It is ignored
+    // and never stored before control of the email address is proven.
+    let attacker_request: RegisterRequest = serde_json::from_value(serde_json::json!({
+        "phone": "0905555666",
+        "email": email,
+        "password": "attacker-chosen-password",
+    }))
+    .unwrap();
+    let pending = AuthService::register(&pool, &redis, attacker_request, 300)
+        .await
+        .unwrap();
+    assert!(db::find_user_by_email(&pool, &pending.email)
+        .await
+        .unwrap()
+        .is_none());
+
+    // A second registration cannot set credentials either. The email owner
+    // chooses the password only while consuming the delivered OTP.
+    AuthService::register(
+        &pool,
+        &redis,
+        RegisterRequest {
+            email: pending.email.clone(),
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{}", pending.email))
+        .await
+        .unwrap();
+    let verified = AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: pending.email.clone(),
+            code,
+            password: "email-owner-chosen-password".into(),
+            phone: "0901111222".into(),
+            display_name: Some("Email owner".into()),
+            avatar_url: None,
+        },
+        3,
+        SECRET,
+        15,
+        30,
+    )
+    .await
+    .unwrap();
+    assert_eq!(verified.user.phone, "+84901111222");
+    assert_eq!(verified.user.display_name.as_deref(), Some("Email owner"));
+
+    assert!(matches!(
+        AuthService::login(
+            &pool,
+            &redis,
+            LoginRequest {
+                email: pending.email.clone(),
+                password: "attacker-chosen-password".into(),
+            },
+            SECRET,
+            15,
+            30,
+        )
+        .await,
+        Err(AppError::Unauthorized(_))
+    ));
+    assert!(AuthService::login(
+        &pool,
+        &redis,
+        LoginRequest {
+            email: pending.email,
+            password: "email-owner-chosen-password".into(),
+        },
+        SECRET,
+        15,
+        30,
+    )
+    .await
+    .is_ok());
 }
 
 #[sqlx::test]
@@ -460,11 +543,7 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
         &pool,
         &redis,
         RegisterRequest {
-            phone: "0907777666".into(),
             email: email.clone(),
-            password: "verified-pass-123".into(),
-            display_name: None,
-            avatar_url: None,
         },
         300,
     )
@@ -486,10 +565,18 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
         .await,
         Err(AppError::Unauthorized(_))
     ));
-    assert!(matches!(
-        AuthService::send_otp(&pool, &redis, &email, 300).await,
-        Err(AppError::Unauthorized(_))
-    ));
+    AuthService::send_otp(&pool, &redis, &email, 300)
+        .await
+        .unwrap();
+    let unverified_otp: Option<String> = redis
+        .clone()
+        .get(format!("otp:login:{email}"))
+        .await
+        .unwrap();
+    assert!(
+        unverified_otp.is_none(),
+        "unverified addresses receive no login OTP"
+    );
     let session_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1",
     )
@@ -498,6 +585,16 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(session_count, 0);
+    AuthService::resend_registration_otp(
+        &pool,
+        &redis,
+        EmailRequest {
+            email: email.clone(),
+        },
+        300,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         AuthService::resend_registration_otp(
             &pool,
@@ -521,6 +618,10 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
         VerifyRegistrationRequest {
             email: email.clone(),
             code: code.clone(),
+            password: "verified-pass-123".into(),
+            phone: "0907777666".into(),
+            display_name: None,
+            avatar_url: None,
         },
         3,
         SECRET,
@@ -538,6 +639,10 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
         VerifyRegistrationRequest {
             email: email.clone(),
             code,
+            password: "another-valid-password".into(),
+            phone: "0907777666".into(),
+            display_name: None,
+            avatar_url: None,
         },
         3,
         SECRET,
@@ -559,4 +664,134 @@ async fn new_account_has_no_session_until_email_is_verified(pool: PgPool) {
     )
     .await
     .is_ok());
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn legacy_registration_reclaims_identity_and_revokes_old_sessions(pool: PgPool) {
+    let redis = redis().await;
+    let email = format!("{}@example.test", Uuid::new_v4());
+    let old_hash = db::hash_password("old-unproved-password").unwrap();
+    let old_user = db::create_user(
+        &pool,
+        "+84903334444",
+        &email,
+        Some(&old_hash),
+        Some("Unproved"),
+        None,
+    )
+    .await
+    .unwrap();
+    let old_sid = Uuid::new_v4();
+    sqlx::query("INSERT INTO auth_sessions (id, user_id, refresh_jti, expires_at) VALUES ($1, $2, $3, now() + interval '1 day')")
+        .bind(old_sid).bind(old_user.id).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+    AuthService::resend_registration_otp(
+        &pool,
+        &redis,
+        EmailRequest {
+            email: email.clone(),
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{email}"))
+        .await
+        .unwrap();
+    let verified = AuthService::verify_registration_otp(
+        &pool,
+        &redis,
+        VerifyRegistrationRequest {
+            email: email.clone(),
+            code,
+            phone: "0902222333".into(),
+            password: "owner-chosen-password".into(),
+            display_name: Some("Verified owner".into()),
+            avatar_url: None,
+        },
+        3,
+        SECRET,
+        15,
+        30,
+    )
+    .await
+    .unwrap();
+    assert_eq!(verified.user.id, old_user.id);
+    assert_eq!(verified.user.phone, "+84902222333");
+    assert_eq!(
+        verified.user.display_name.as_deref(),
+        Some("Verified owner")
+    );
+    let stale_session: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM auth_sessions WHERE id = $1)")
+            .bind(old_sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!stale_session);
+    let user = db::find_user_by_id(&pool, old_user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(db::verify_password(
+        "owner-chosen-password",
+        user.password_hash.as_deref().unwrap()
+    )
+    .unwrap());
+    assert!(!db::verify_password(
+        "old-unproved-password",
+        user.password_hash.as_deref().unwrap()
+    )
+    .unwrap());
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn registration_code_creates_at_most_one_account_under_concurrency(pool: PgPool) {
+    let redis = redis().await;
+    let email = format!("{}@example.test", Uuid::new_v4());
+    AuthService::register(
+        &pool,
+        &redis,
+        RegisterRequest {
+            email: email.clone(),
+        },
+        300,
+    )
+    .await
+    .unwrap();
+    let code: String = redis
+        .clone()
+        .get(format!("otp:registration:{email}"))
+        .await
+        .unwrap();
+    let request = || VerifyRegistrationRequest {
+        email: email.clone(),
+        code: code.clone(),
+        phone: "0908888777".into(),
+        password: "owner-chosen-password".into(),
+        display_name: None,
+        avatar_url: None,
+    };
+    let (left, right) = tokio::join!(
+        AuthService::verify_registration_otp(&pool, &redis, request(), 3, SECRET, 15, 30),
+        AuthService::verify_registration_otp(&pool, &redis, request(), 3, SECRET, 15, 30)
+    );
+    assert_ne!(left.is_ok(), right.is_ok());
+    let accounts: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(accounts, 1);
+    let sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1",
+    )
+    .bind(&email)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sessions, 1);
 }

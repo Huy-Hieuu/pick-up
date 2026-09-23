@@ -29,9 +29,9 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"phone\": \"0909123123\",\n  \"email\": \"test@example.com\",\n  \"display_name\": \"John Doe\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
             },
-            "description": "Returns 202 and sends a registration OTP. No access or refresh token is issued until /auth/verify-registration succeeds."
+            "description": "Requests an email verification code and returns a generic 202. No user, phone reservation, password or session is created until verification succeeds."
           }
         },
         {
@@ -42,9 +42,9 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\",\n  \"password\": \"password123\",\n  \"phone\": \"0909123123\",\n  \"display_name\": \"John Doe\"\n}"
             },
-            "description": "Consumes a single-use registration OTP, verifies the email, and returns access/refresh tokens."
+            "description": "Consumes a single-use email OTP, creates the verified account with the owner's password and profile, and returns access/refresh tokens. Also reclaims legacy unverified accounts and revokes their previous sessions."
           }
         },
         {
@@ -83,7 +83,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"test@example.com\"\n}"
             },
-            "description": "Send 6-digit OTP to email. Rate limited: 1 per 60 seconds per email."
+            "description": "Returns the same response for eligible and unknown addresses; queues a 6-digit OTP only for a verified account. Rate limited: 1 per 60 seconds per email."
           }
         },
         {
