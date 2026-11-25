@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import { View, useWindowDimensions } from 'react-native';
 import { AppText, BackLink, Card, Icon, Page, palette, type } from './ui';
 import { userFacingError } from '../utils/errors';
+import { MotionView } from './motion';
 
 export function AuthFrame({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   const { width } = useWindowDimensions();
@@ -12,7 +13,7 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
       <Page>
         <BackLink />
         <View style={{ borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: palette.line, backgroundColor: palette.white, flexDirection: 'row', minHeight: 610 }}>
-          <View style={{ width: '44%', backgroundColor: palette.forest, padding: 38, gap: 24, justifyContent: 'space-between' }}>
+          <MotionView delay={40} duration={560} distance={20} style={{ width: '44%', backgroundColor: palette.forest, padding: 38, gap: 24, justifyContent: 'space-between' }}>
             <View style={{ gap: 16 }}>
               <AppText style={[type.label, { color: palette.lime }]}>PICKUP COMMUNITY</AppText>
               <AppText style={{ fontFamily: 'Inter_700Bold', fontSize: 48, lineHeight: 56, letterSpacing: -1.8, color: palette.white }}>
@@ -34,15 +35,15 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
                 </View>
               ))}
             </View>
-          </View>
-          <View style={{ flex: 1, padding: 46, justifyContent: 'center', gap: 22 }}>
+          </MotionView>
+          <MotionView delay={130} duration={560} distance={20} style={{ flex: 1, padding: 46, justifyContent: 'center', gap: 22 }}>
             <View style={{ gap: 10 }}>
               <AppText accessibilityRole="header" style={type.title}>{title}</AppText>
               <AppText style={{ color: palette.muted, maxWidth: 430 }}>{subtitle}</AppText>
             </View>
             <Card style={{ width: '100%', maxWidth: 460, alignSelf: 'center', padding: 27, gap: 19 }}>{children}</Card>
             <AppText style={{ textAlign: 'center', color: palette.muted, fontSize: 11 }}>Một tài khoản. Nhiều buổi chơi đáng nhớ.</AppText>
-          </View>
+          </MotionView>
         </View>
       </Page>
     );
@@ -50,12 +51,14 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
   return (
     <Page narrow>
       <BackLink />
-      <View style={{ alignItems: 'center', gap: 12 }}>
+      <MotionView delay={30} duration={480} distance={14} style={{ alignItems: 'center', gap: 12 }}>
         <View style={{ height: 52, width: 52, borderRadius: 17, backgroundColor: palette.pale, alignItems: 'center', justifyContent: 'center' }}><Icon name="activity" color={palette.green} size={25} /></View>
         <AppText accessibilityRole="header" style={[type.title, { textAlign: 'center' }]}>{title}</AppText>
         <AppText style={{ color: palette.muted, textAlign: 'center', maxWidth: 430 }}>{subtitle}</AppText>
-      </View>
-      <Card style={{ width: '100%', maxWidth: 460, alignSelf: 'center', padding: 25, gap: 19 }}>{children}</Card>
+      </MotionView>
+      <MotionView delay={110} duration={500} distance={18} style={{ width: '100%', maxWidth: 460, alignSelf: 'center' }}>
+        <Card style={{ width: '100%', padding: 25, gap: 19 }}>{children}</Card>
+      </MotionView>
       <AppText style={{ textAlign: 'center', color: palette.muted, fontSize: 11 }}>Một tài khoản. Nhiều buổi chơi đáng nhớ.</AppText>
     </Page>
   );

@@ -1,6 +1,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -20,6 +21,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { router, type Href } from "expo-router";
 import { authReturnRoute } from "../utils/navigation";
 import { userFacingError } from "../utils/errors";
+import { MotionView, usePressScale } from "./motion";
 
 export const palette = {
   ink: "#173C32",
@@ -71,6 +73,8 @@ export function Icon({
 }) {
   return <Feather name={name} size={size} color={color} />;
 }
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 export function Button({
   title,
   onPress,
@@ -90,6 +94,7 @@ export function Button({
   icon?: React.ComponentProps<typeof Feather>["name"];
   style?: StyleProp<ViewStyle>;
 }) {
+  const { scale, pressIn, pressOut } = usePressScale();
   const unavailable = disabled || loading;
   const foreground = danger
     ? palette.danger
@@ -97,12 +102,14 @@ export function Button({
       ? palette.ink
       : palette.white;
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="button"
       accessibilityLabel={title}
       accessibilityState={{ disabled: !!unavailable, busy: !!loading }}
       disabled={unavailable}
       onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
       style={({ pressed }) => [
         ui.button,
         {
@@ -113,6 +120,7 @@ export function Button({
               ? palette.line
               : palette.forest,
           opacity: unavailable ? 0.5 : pressed ? 0.8 : 1,
+          transform: [{ scale }],
         },
         style,
       ]}
@@ -132,7 +140,7 @@ export function Button({
       >
         {title}
       </AppText>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 export function IconButton({
@@ -146,16 +154,19 @@ export function IconButton({
   onPress: () => void;
   active?: boolean;
 }) {
+  const { scale, pressIn, pressOut } = usePressScale();
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: !!active }}
       onPress={onPress}
-      style={ui.iconButton}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      style={[ui.iconButton, { transform: [{ scale }] }]}
     >
       <Icon name={name} color={active ? palette.green : palette.ink} />
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 export function Pill({
@@ -169,11 +180,14 @@ export function Pill({
   onPress?: () => void;
   icon?: React.ComponentProps<typeof Feather>["name"];
 }) {
+  const { scale, pressIn, pressOut } = usePressScale();
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityState={{ selected: !!selected }}
       onPress={onPress}
+      onPressIn={onPress ? pressIn : undefined}
+      onPressOut={onPress ? pressOut : undefined}
       disabled={!onPress}
       style={[
         ui.pill,
@@ -181,6 +195,7 @@ export function Pill({
           backgroundColor: palette.forest,
           borderColor: palette.forest,
         },
+        { transform: [{ scale }] },
       ]}
     >
       {icon && (
@@ -199,7 +214,7 @@ export function Pill({
       >
         {title}
       </AppText>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 export function Field({
@@ -344,34 +359,38 @@ export function StateBlock({
 }) {
   if (loading)
     return (
-      <View
+      <MotionView
         accessibilityLiveRegion="polite"
-        style={ui.state}
+        style={[ui.state, ui.stateBox]}
       >
         <ActivityIndicator color={palette.green} />
         <AppText style={{ color: palette.muted }}>Đang tải…</AppText>
-      </View>
+      </MotionView>
     );
   if (error)
     return (
-      <Card style={ui.state}>
-        <Icon name="wifi-off" size={28} />
-        <AppText accessibilityRole="header" style={type.subheading}>
-          Chưa tải được dữ liệu
-        </AppText>
-        <AppText accessibilityRole="alert" style={{ textAlign: "center", color: palette.muted }}>
-          {userFacingError(error)}
-        </AppText>
-        {retry && <Button title="Thử lại" secondary onPress={retry} />}
+      <Card style={[ui.state, ui.stateBox]}>
+        <MotionView style={{ width: "100%", alignItems: "center", gap: 15 }}>
+          <Icon name="wifi-off" size={28} />
+          <AppText accessibilityRole="header" style={type.subheading}>
+            Chưa tải được dữ liệu
+          </AppText>
+          <AppText accessibilityRole="alert" style={{ textAlign: "center", color: palette.muted }}>
+            {userFacingError(error)}
+          </AppText>
+          {retry && <Button title="Thử lại" secondary onPress={retry} />}
+        </MotionView>
       </Card>
     );
   return (
-    <Card style={ui.state}>
-      <Icon name="sun" size={32} />
-      <AppText accessibilityLiveRegion="polite" style={{ textAlign: "center", color: palette.muted }}>
-        {empty || "Chưa có dữ liệu."}
-      </AppText>
-      {action && <Button title={action.title} secondary onPress={action.onPress} />}
+    <Card style={[ui.state, ui.stateBox]}>
+      <MotionView style={{ width: "100%", alignItems: "center", gap: 15 }}>
+        <Icon name="sun" size={32} />
+        <AppText accessibilityLiveRegion="polite" style={{ textAlign: "center", color: palette.muted }}>
+          {empty || "Chưa có dữ liệu."}
+        </AppText>
+        {action && <Button title={action.title} secondary onPress={action.onPress} />}
+      </MotionView>
     </Card>
   );
 }
@@ -383,23 +402,25 @@ export function AuthGate({
   next: string;
 }) {
   return (
-    <Card style={ui.state}>
-      <Icon name="users" size={32} />
-      <AppText style={type.heading}>Ra sân cùng cộng đồng</AppText>
-      <AppText style={{ color: palette.muted, textAlign: "center" }}>
-        {children}
-      </AppText>
-      <Button
-        title="Đăng nhập để tiếp tục"
-        onPress={() => router.push({ pathname: "/login", params: { next } })}
-      />
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.push({ pathname: "/register", params: { next } })}
-        style={{ padding: 10, minHeight: 48, minWidth: 48, justifyContent: "center" }}
-      >
-        <AppText>Tạo tài khoản mới ↗</AppText>
-      </Pressable>
+    <Card style={[ui.state, ui.stateBox]}>
+      <MotionView style={{ width: "100%", alignItems: "center", gap: 15 }}>
+        <Icon name="users" size={32} />
+        <AppText style={type.heading}>Ra sân cùng cộng đồng</AppText>
+        <AppText style={{ color: palette.muted, textAlign: "center" }}>
+          {children}
+        </AppText>
+        <Button
+          title="Đăng nhập để tiếp tục"
+          onPress={() => router.push({ pathname: "/login", params: { next } })}
+        />
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push({ pathname: "/register", params: { next } })}
+          style={{ padding: 10, minHeight: 48, minWidth: 48, justifyContent: "center" }}
+        >
+          <AppText>Tạo tài khoản mới ↗</AppText>
+        </Pressable>
+      </MotionView>
     </Card>
   );
 }
@@ -486,6 +507,11 @@ export const ui = StyleSheet.create({
     paddingHorizontal: 22,
     gap: 15,
   },
+  stateBox: {
+    width: "100%",
+    maxWidth: 560,
+    alignSelf: "center",
+  },
   divider: { height: 1, backgroundColor: palette.line },
   eyebrow: {
     fontFamily: "Inter_600SemiBold",
@@ -494,5 +520,5 @@ export const ui = StyleSheet.create({
     color: palette.muted,
   },
   link: { minHeight: 48, minWidth: 48, justifyContent: "center" },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 20 },
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 20 },
 });

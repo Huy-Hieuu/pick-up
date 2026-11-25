@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, usePathname, router } from "expo-router";
 import { useSession } from "../stores/session";
 import { AppText, Button, Icon, Message, palette, ui } from "./ui";
+import { ActivePill, MotionView, RouteTransition } from "./motion";
 
 const destinations = [
   { href: "/", label: "Khám phá", icon: "compass" },
@@ -65,11 +66,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         paddingTop: insets.top,
       }}
     >
-      <View
+      <MotionView
+        distance={-12}
+        duration={520}
         style={{
           backgroundColor: palette.paper,
           borderBottomWidth: 1,
           borderColor: palette.line,
+          shadowColor: palette.forest,
+          shadowOpacity: 0.06,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 6 },
+          zIndex: 10,
         }}
       >
         <View
@@ -85,6 +93,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             },
           ]}
         >
+          <MotionView distance={-8} duration={480}>
           <Link
             href="/"
             accessibilityRole="link"
@@ -124,8 +133,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </AppText>
             </AppText>
           </Link>
+          </MotionView>
           {desktop && (
-            <View style={[ui.row, { gap: 8 }]}>
+            <MotionView delay={70} duration={500} style={[ui.row, { gap: 8 }]}>
               {destinations.slice(0, 3).map((item) => (
                 <Link
                   key={item.href}
@@ -137,10 +147,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     minHeight: 48,
                     justifyContent: "center",
                     borderRadius: 25,
-                    backgroundColor:
-                      path === item.href ? palette.pale : "transparent",
+                    backgroundColor: "transparent",
+                    position: "relative",
+                    overflow: "hidden",
                   }}
                 >
+                  <ActivePill selected={path === item.href} color={palette.pale} />
                   <AppText
                     style={{
                       fontFamily: "Inter_500Medium",
@@ -151,9 +163,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </AppText>
                 </Link>
               ))}
-            </View>
+            </MotionView>
           )}
           {desktop ? (
+            <MotionView delay={130} duration={500} distance={-8} style={{ alignSelf: "flex-end" }}>
             <Button
               title={session ? "Tài khoản" : "Đăng nhập"}
               secondary
@@ -161,6 +174,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               onPress={() => router.push(session ? "/profile" : "/login")}
               style={{ minHeight: 48, maxWidth: 220 }}
             />
+            </MotionView>
           ) : (
             <View style={[ui.row, { flexShrink: 1 }]}>
               <Icon name="map-pin" size={14} />
@@ -170,14 +184,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </View>
           )}
         </View>
-      </View>
+      </MotionView>
       {storageError && (
         <View style={{ paddingHorizontal: desktop ? 40 : 20, paddingTop: 12, gap: 8 }}>
           <Message error>{storageError}</Message>
           <Button title="Đóng thông báo" secondary onPress={clearStorageError} />
         </View>
       )}
-      <View style={{ flex: 1, minHeight: 0 }}>{children}</View>
+      <RouteTransition routeKey={path}>{children}</RouteTransition>
       {!desktop && !auth && !keyboardVisible && (
         <View
           style={{
@@ -189,11 +203,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             flexDirection: "row",
           }}
         >
-          {destinations.map((item) => {
+          {destinations.map((item, index) => {
             const selected = path === item.href;
             return (
+              <MotionView key={item.href} delay={140 + index * 55} duration={460} distance={10} style={{ flex: 1 }}>
               <Link
-                key={item.href}
                 href={item.href}
                 accessibilityRole="link"
                 accessibilityLabel={item.label}
@@ -207,9 +221,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   alignItems: "center",
                   justifyContent: "center",
                   gap: 5,
-                  backgroundColor: selected ? palette.pale : "transparent",
+                  backgroundColor: "transparent",
+                  position: "relative",
+                  overflow: "hidden",
                 }}
               >
+                <ActivePill selected={selected} radius={16} color={palette.pale} />
                 <Icon
                   name={item.icon}
                   size={21}
@@ -228,6 +245,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   {item.label}
                 </AppText>
               </Link>
+              </MotionView>
             );
           })}
         </View>

@@ -14,7 +14,9 @@ loading/empty/error states and the scrolling page container. `AppShell.tsx`
 provides bottom navigation on phones and header navigation on larger screens.
 Pages use window dimensions, wrap filters and adjust grids at their breakpoints.
 Text and button labels may wrap; user text remains scalable. Only the decorative
-wordmark keeps its fixed font scale.
+wordmark keeps its fixed font scale. Result grids center incomplete rows, state
+and auth boxes use a centered maximum-width frame, and desktop profile/form
+panels are centered within the content column.
 
 The native shell accounts for safe-area insets, hides bottom navigation when the
 keyboard opens and requests Android resize behavior. The brand mark is kept as
@@ -28,6 +30,12 @@ polite live region. The Android touch-target baseline is 48 dp, following
 [Android's accessibility guidance](https://developer.android.com/guide/topics/ui/accessibility/apps.html).
 These properties follow [React Native accessibility APIs](https://reactnative.dev/docs/accessibility);
 TalkBack behavior still requires device verification.
+
+`src/components/motion.tsx` provides lightweight fade/slide entrances, route
+transitions, active-navigation pills and press-scale feedback without an extra
+animation dependency. Card lists use short staggered entrances. Every motion
+primitive respects the operating system reduced-motion setting and keeps content
+visible when animation is disabled.
 
 ## User journeys and verification
 

@@ -311,7 +311,7 @@ export default function Profile() {
       </AppText>
       {error && <Message error>{error}</Message>}
       {notice && <Message>{notice}</Message>}
-      <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
+      <View style={{ width: "100%", maxWidth: wide ? 1024 : undefined, alignSelf: "center", flexDirection: wide ? "row" : "column", gap: 24, alignItems: wide ? "center" : "flex-start", justifyContent: "center" }}>
       <Card style={{ flex: 1, maxWidth: 680, width: "100%" }}>
         <View style={ui.row}>
           <View
@@ -564,8 +564,8 @@ export default function Profile() {
           <StateBlock error={games.error} retry={games.refresh} />
         ) : games.data?.games.length ? (
           <View style={ui.grid}>
-            {games.data.games.map((game) => (
-              <GameCard key={game.id} game={game} width={cardWidth} />
+            {games.data.games.map((game, index) => (
+              <GameCard key={game.id} game={game} width={cardWidth} index={index} />
             ))}
           </View>
         ) : (
