@@ -1,7 +1,13 @@
-# PickUp backend
+# PickUp
 
-Rust/Axum API for court bookings, pickup games and bill splitting. This checkout
-contains the backend only; mobile and owner applications are not implemented.
+Court bookings, pickup games and bill splitting, with a Rust/Axum API in
+`server/` and an Expo/React Native client in `mobile/` for web, Android and iOS.
+The responsive client includes court discovery/filtering and saved courts,
+email registration/login/password recovery, booking and game creation,
+joining/leaving, creator status controls, bill shares and payment-provider
+redirects, profile and avatar editing, server-side logout, and personal booking/game
+recovery after restarting the app. Game details refresh while the screen is
+active. A separate court-owner application is not implemented.
 
 ## Run locally
 
@@ -40,6 +46,57 @@ the public media URL appropriately. Never expose the development credentials.
 
 ## Verify
 
+### Mobile/web client
+
+Use Node 22.23.3 and npm 11.19.0. Start the API first, then:
+
+```sh
+cd mobile
+npm ci
+cp .env.example .env
+# EXPO_PUBLIC_API_URL must point to the API reachable from this browser/device.
+npm run web
+```
+
+For browser development, permit the exact web origin in the backend's
+`CORS_ORIGINS` (normally `http://localhost:8081`). A physical phone needs the
+computer's LAN address instead of `localhost`, and the API must listen on an
+appropriate local interface. Android Emulator uses `http://10.0.2.2:8080` to
+reach the host API ([Android networking](https://developer.android.com/studio/run/emulator-networking-address)). Native launch commands are `npm run android` and
+`npm run ios`; physical-device release acceptance remains outstanding.
+`EXPO_PUBLIC_` values are embedded in the client and must contain no secrets.
+Production builds require an absolute HTTPS API origin; the app shows a setup
+error instead of entering broken data flows when it is missing or invalid.
+The browser test server defaults to ports 18081/18080 to avoid common local
+service conflicts; override with `PICKUP_WEB_PORT`, `PICKUP_WEB_URL`, and
+`PICKUP_API_URL` when needed.
+
+```sh
+npm run check:expo
+npm run doctor
+npm run typecheck
+npm test
+npm run export:web
+npm run export:android
+npx playwright install chromium
+npm run test:e2e
+npm run test:e2e:static
+npm audit
+
+# Lightweight production-style web view (after export:web)
+PORT=8082 npm run serve:web
+```
+
+See [mobile verification and release readiness](docs/mobile-readiness.md) for
+the pinned dependency set, browser-test scope and unresolved security advisories.
+The [UI feature map](docs/ui-design.md) describes visual patterns and user journeys;
+[current mobile evidence](artifacts/mobile-validation/summary.md) records the
+browser, actual API and Android bundle checks.
+The dependency audit is a separate release gate; a passing build does not make
+those advisories disappear.
+
+### Backend
+
 ```sh
 cd server
 cargo fmt --all -- --check
@@ -75,12 +132,27 @@ strings so WebSocket bearer tokens are not logged.
 
 ## Release status
 
-This is a hardened backend foundation, **not yet a complete production release**.
+The implemented API and responsive client are **not yet a complete production
+release**. Local integration evidence is recorded in the
+[backend validation summary](artifacts/backend-validation/summary.md) (146 tests,
+formatting and strict Clippy) and
+[actual API preview verification](artifacts/fullstack/summary.md) (isolated
+PostgreSQL/Redis, actual registration, game/booking mutations and logout).
+The preview uses a local SMTP discard sink and has no configured payment or
+storage provider. It does not establish real provider acceptance or native
+release readiness.
 The [release acceptance checklist](docs/backend-release-checklist.md) records
 verified fixes, rollout order and the remaining external/product requirements.
+The [staging operations runbook](docs/staging-operations.md) covers explicit
+configuration, bounded readiness checks and the locally verified backup/restore
+commands, with deployed acceptance still outstanding.
 See [authentication changes](docs/backend-security.md),
 [billing behavior and migration checks](docs/backend-billing.md), and the
 [payment protocol and remaining launch checks](docs/backend-payments.md).
+The [personal schedule API](docs/backend-personal-schedule.md) documents
+authenticated booking recovery and game history. Current source-review findings
+and completed fixes are recorded in the [platform review](docs/review-platform.md)
+and [billing/game review](docs/review-billing-games.md).
 The [real-time lobby protocol](docs/backend-realtime.md) documents committed
 cross-instance updates, connection/access limits, and reconnect behavior.
 The [email queue operations guide](docs/backend-email.md) covers leases, retries
@@ -103,5 +175,8 @@ Remaining launch gates:
 - Production HTTPS/CORS/storage configuration, restricted network access,
   secrets, migration preflight, monitoring/alerts, backups and restore drills.
 - Load tests and end-to-end provider/storage acceptance tests.
+- Android/iOS signed release builds and physical-device acceptance, privacy/store
+  requirements, and resolution or explicit release-owner review of the mobile
+  dependency advisories documented above.
 
 Do not use real-money payment traffic until the provider launch gates are met.
