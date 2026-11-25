@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -95,6 +95,7 @@ export function Button({
   style?: StyleProp<ViewStyle>;
 }) {
   const { scale, pressIn, pressOut } = usePressScale();
+  const [pressed, setPressed] = useState(false);
   const unavailable = disabled || loading;
   const foreground = danger
     ? palette.danger
@@ -108,9 +109,15 @@ export function Button({
       accessibilityState={{ disabled: !!unavailable, busy: !!loading }}
       disabled={unavailable}
       onPress={onPress}
-      onPressIn={pressIn}
-      onPressOut={pressOut}
-      style={({ pressed }) => [
+      onPressIn={() => {
+        setPressed(true);
+        pressIn();
+      }}
+      onPressOut={() => {
+        setPressed(false);
+        pressOut();
+      }}
+      style={[
         ui.button,
         {
           backgroundColor: secondary || danger ? palette.white : palette.forest,

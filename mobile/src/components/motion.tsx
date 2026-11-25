@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AccessibilityInfo, Animated, Easing, type AccessibilityProps, type StyleProp, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Platform, type AccessibilityProps, type StyleProp, type ViewStyle } from 'react-native';
 
 export function useReducedMotion() {
   const [reduced, setReduced] = useState(false);
@@ -47,7 +47,7 @@ export function MotionView({
       duration,
       delay,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     });
     animation.start();
     return () => animation.stop();
@@ -84,7 +84,7 @@ export function RouteTransition({ children, routeKey }: { children: ReactNode; r
       toValue: 1,
       duration: 320,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     });
     animation.start();
     return () => animation.stop();
@@ -108,11 +108,11 @@ export function usePressScale() {
   const scale = useRef(new Animated.Value(1)).current;
   const pressIn = () => {
     if (reduced) return;
-    Animated.spring(scale, { toValue: 0.97, speed: 45, bounciness: 0.08, useNativeDriver: true }).start();
+    Animated.spring(scale, { toValue: 0.97, speed: 45, bounciness: 0.08, useNativeDriver: Platform.OS !== 'web' }).start();
   };
   const pressOut = () => {
     if (reduced) return;
-    Animated.spring(scale, { toValue: 1, speed: 32, bounciness: 0.12, useNativeDriver: true }).start();
+    Animated.spring(scale, { toValue: 1, speed: 32, bounciness: 0.12, useNativeDriver: Platform.OS !== 'web' }).start();
   };
   return { scale, pressIn, pressOut };
 }
@@ -125,7 +125,7 @@ export function ActivePill({ selected, radius = 25, color }: { selected: boolean
       toValue: selected ? 1 : 0,
       speed: selected ? 24 : 30,
       bounciness: selected ? 0.18 : 0,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     });
     if (reduced) progress.setValue(selected ? 1 : 0);
     else animation.start();
@@ -133,8 +133,8 @@ export function ActivePill({ selected, radius = 25, color }: { selected: boolean
   }, [progress, reduced, selected]);
   return (
     <Animated.View
-      pointerEvents="none"
       style={{
+        pointerEvents: 'none',
         position: 'absolute',
         left: 0,
         right: 0,

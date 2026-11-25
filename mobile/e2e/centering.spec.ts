@@ -77,6 +77,35 @@ test('desktop create-game form is horizontally centered', async ({ page }) => {
   expect(centerDelta).toBeLessThanOrEqual(2);
 });
 
+test('desktop header active text is vertically centered in its pill', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockApi(page);
+  await page.goto('/');
+  const link = page.getByRole('link', { name: 'Khám phá', exact: true });
+  await expect(link).toBeVisible();
+  const centers = await link.evaluate((element) => {
+    const linkBox = element.getBoundingClientRect();
+    const textBox = element.querySelector('span')!.getBoundingClientRect();
+    return {
+      link: (linkBox.top + linkBox.bottom) / 2,
+      text: (textBox.top + textBox.bottom) / 2,
+      height: linkBox.height,
+    };
+  });
+  expect(centers.height).toBeCloseTo(44, 1);
+  expect(Math.abs(centers.link - centers.text)).toBeLessThanOrEqual(1);
+});
+
+test('mobile primary buttons keep their accessible touch height', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto('/login');
+  const button = page.getByRole('button', { name: 'Đăng nhập', exact: true }).last();
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+});
+
 test('reduced motion keeps content visible without entrance transforms', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await mockApi(page);

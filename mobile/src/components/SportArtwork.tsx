@@ -7,12 +7,11 @@ export function SportArtwork({ sport }: { sport: Sport }) {
   const pickleball = sport === 'pickleball';
   return (
     <View
-      pointerEvents="none"
       accessible={false}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       style={[
-        { width: '100%', height: '100%', backgroundColor: pickleball ? '#E7EEDC' : '#F1EBD9', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+        { width: '100%', height: '100%', pointerEvents: 'none', backgroundColor: pickleball ? '#E7EEDC' : '#F1EBD9', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
       ]}
     >
       <View
@@ -60,10 +59,7 @@ export function SportArtwork({ sport }: { sport: Sport }) {
           backgroundColor: palette.white,
           alignItems: 'center',
           justifyContent: 'center',
-          shadowColor: palette.forest,
-          shadowOpacity: 0.12,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 8 },
+          boxShadow: "0 8px 18px rgba(25, 62, 50, 0.12)",
         }}
       >
         <Icon

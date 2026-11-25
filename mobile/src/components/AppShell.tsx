@@ -73,10 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           backgroundColor: palette.paper,
           borderBottomWidth: 1,
           borderColor: palette.line,
-          shadowColor: palette.forest,
-          shadowOpacity: 0.06,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 6 },
+          boxShadow: "0 6px 18px rgba(25, 62, 50, 0.06)",
           zIndex: 10,
         }}
       >
@@ -144,10 +141,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   accessibilityState={{ selected: path === item.href }}
                   style={{
                     paddingHorizontal: 18,
-                    minHeight: 48,
+                    minHeight: 44,
+                    height: 44,
+                    alignItems: "center",
                     justifyContent: "center",
                     borderRadius: 25,
                     backgroundColor: "transparent",
+                    display: "flex",
                     position: "relative",
                     overflow: "hidden",
                   }}
