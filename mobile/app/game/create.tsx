@@ -1,0 +1,20 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import type { Court, GameDetail } from '../../src/types/api';
+import { useResource } from '../../src/hooks/useResource';
+import { useSession } from '../../src/stores/session';
+import { money, sportName } from '../../src/utils/format';
+import { AppText, AuthGate, BackLink, Button, Card, Field, Message, Page, StateBlock, palette, type, ui } from '../../src/components/ui';
+import { formError } from '../../src/components/AuthFrame';
+import { isCourt, isGameDetail } from '../../src/types/validators';
+import { useActionScope } from '../../src/hooks/useActionScope';
+
+export default function CreateGame() {
+  const { slot, court: courtId } = useLocalSearchParams<{ slot: string; court: string }>(); const { session, request, ready } = useSession(); const valid = typeof slot === 'string' && typeof courtId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slot) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(courtId);
+  const court = useResource<Court>(valid ? '/courts/' + courtId : null, isCourt); const [max, setMax] = useState('4'); const [description, setDescription] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  const beginAction = useActionScope(slot + ':' + courtId + ':' + session?.user.id);
+  useEffect(() => { setBusy(false); setError(null); }, [slot, courtId, session?.user.id]);
+  useFocusEffect(useCallback(() => { setBusy(false); }, []));
+  async function create() { if (busy || !court.data || !session) return; const active = beginAction(); setError(null); const players = Number(max); if (!Number.isInteger(players) || players < 2 || players > 30) { setError('Chọn từ 2 đến 30 người, bao gồm bạn.'); return; } setBusy(true); try { const game = await request<GameDetail>('/games', { method: 'POST', body: { court_slot_id: slot, sport_type: court.data.sport_type, max_players: players, description: description.trim() || null } }); if (!active()) return; if (!isGameDetail(game)) throw new Error('Chưa xác nhận được trận. Kiểm tra danh sách trận của bạn trước khi tạo lại.'); router.replace({ pathname: '/game/[id]', params: { id: game.id } }); } catch (reason) { if (active()) setError(formError(reason)); } finally { if (active()) setBusy(false); } }
+  return <Page narrow><BackLink /><AppText style={ui.eyebrow}>CUỘC VUI BẮT ĐẦU TỪ BẠN</AppText><AppText accessibilityRole="header" style={type.title}>Tạo trận.{'\n'}Gặp đồng đội mới.</AppText>{!ready ? <StateBlock loading /> : !session ? <AuthGate next={'/game/create?slot=' + encodeURIComponent(slot || '') + '&court=' + encodeURIComponent(courtId || '')}>Đăng nhập để tạo trận từ booking của bạn.</AuthGate> : !valid ? <StateBlock empty="Chọn một booking trong lịch của bạn để tạo trận." /> : !court.data ? <StateBlock loading={court.loading} error={court.error} retry={court.refresh} /> : <Card style={{ width: '100%', maxWidth: 760, alignSelf: 'center' }}><AppText style={type.heading}>{court.data.name}</AppText><AppText style={{ color: palette.muted }}>{sportName(court.data.sport_type)} · {money(court.data.price_per_slot)} / khung giờ</AppText><AppText>Trận được tạo từ khung giờ bạn đã đặt. Booking sẽ được kiểm tra trước khi xác nhận.</AppText>{error && <Message error>{error}</Message>}<Field label="Số người tối đa" value={max} onChangeText={setMax} keyboardType="number-pad" maxLength={2} editable={!busy} /><AppText style={{ color: palette.muted, fontSize: 11 }}>Từ 2 đến 30 người, tính cả bạn. Tiền sân được chia theo số người thực tế.</AppText><Field label="Lời nhắn cho đồng đội" value={description} onChangeText={setDescription} placeholder="Trình độ, dụng cụ cần mang, giờ có mặt…" multiline maxLength={500} editable={!busy} style={{ minHeight: 110, textAlignVertical: 'top' }} /><AppText style={{ color: palette.muted, fontSize: 11 }}>{description.length}/500</AppText><Button title="Tạo trận" icon="arrow-up-right" loading={busy} onPress={() => { void create(); }} /></Card>}</Page>;
+}

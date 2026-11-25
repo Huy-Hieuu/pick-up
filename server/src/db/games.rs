@@ -47,7 +47,7 @@ pub async fn list_games_all_joined(
             OR ($1::game_status IS NOT NULL AND g.status = $1)
         )
           AND ($2::sport_type IS NULL OR g.sport_type = $2)
-          AND ($3::date IS NULL OR (cs.start_time >= $3 AND cs.start_time < $3 + INTERVAL '1 day'))
+          AND ($3::date IS NULL OR (cs.start_time >= ($3::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') AND cs.start_time < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')))
         ORDER BY g.created_at DESC
         LIMIT $4 OFFSET $5
         "#,
@@ -94,7 +94,7 @@ pub async fn list_games_near_joined(
                 OR ($3::game_status IS NOT NULL AND g.status = $3)
             )
               AND ($4::sport_type IS NULL OR g.sport_type = $4)
-              AND ($5::date IS NULL OR (cs.start_time >= $5 AND cs.start_time < $5 + INTERVAL '1 day'))
+              AND ($5::date IS NULL OR (cs.start_time >= ($5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') AND cs.start_time < (($5::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')))
         ) sub
         WHERE sub.distance_km <= $6
         ORDER BY sub.distance_km ASC
@@ -129,7 +129,7 @@ pub async fn count_games_all_filtered(
             OR ($1::game_status IS NOT NULL AND g.status = $1)
         )
           AND ($2::sport_type IS NULL OR g.sport_type = $2)
-          AND ($3::date IS NULL OR (cs.start_time >= $3 AND cs.start_time < $3 + INTERVAL '1 day'))
+          AND ($3::date IS NULL OR (cs.start_time >= ($3::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') AND cs.start_time < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')))
         "#,
     )
     .bind(status)
@@ -163,7 +163,7 @@ pub async fn count_games_near_filtered(
                 OR ($3::game_status IS NOT NULL AND g.status = $3)
             )
               AND ($4::sport_type IS NULL OR g.sport_type = $4)
-              AND ($5::date IS NULL OR (cs.start_time >= $5 AND cs.start_time < $5 + INTERVAL '1 day'))
+              AND ($5::date IS NULL OR (cs.start_time >= ($5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') AND cs.start_time < (($5::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')))
         ) sub
         WHERE sub.distance_km <= $6
         "#,
@@ -227,7 +227,7 @@ pub async fn list_players_with_profile(
         LEFT JOIN LATERAL (
             SELECT status FROM payments
             WHERE game_id = gp.game_id AND user_id = gp.user_id
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY (status = 'paid') DESC, created_at DESC, id DESC LIMIT 1
         ) p ON true
         WHERE gp.game_id = $1
         ORDER BY gp.joined_at
@@ -276,12 +276,10 @@ pub async fn count_game_players_tx(
     conn: &mut sqlx::PgConnection,
     game_id: Uuid,
 ) -> sqlx::Result<i64> {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM game_players WHERE game_id = $1",
-    )
-    .bind(game_id)
-    .fetch_one(&mut *conn)
-    .await
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM game_players WHERE game_id = $1")
+        .bind(game_id)
+        .fetch_one(&mut *conn)
+        .await
 }
 
 pub async fn game_exists_for_slot_tx(
@@ -305,25 +303,17 @@ pub async fn has_overlapping_game_tx(
     slot_start: DateTime<Utc>,
     slot_end: DateTime<Utc>,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM game_players gp
-            JOIN games g ON g.id = gp.game_id
-            JOIN court_slots cs ON cs.id = g.court_slot_id
-            WHERE gp.user_id = $1
-              AND g.id != $2
-              AND g.status IN ('open', 'full', 'in_progress')
-              AND cs.start_time < $4
-              AND cs.end_time > $3
-        )
-        "#,
+    let slot_id: Option<Uuid> = sqlx::query_scalar("SELECT court_slot_id FROM games WHERE id = $1")
+        .bind(exclude_game_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    super::courts::has_overlapping_booking_tx(
+        conn,
+        user_id,
+        slot_id.unwrap_or_else(Uuid::nil),
+        slot_start,
+        slot_end,
     )
-    .bind(user_id)
-    .bind(exclude_game_id)
-    .bind(slot_start)
-    .bind(slot_end)
-    .fetch_one(&mut *conn)
     .await
 }
 
@@ -333,7 +323,7 @@ pub async fn has_active_game_for_slot_tx(
     slot_id: Uuid,
 ) -> sqlx::Result<bool> {
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM games WHERE court_slot_id = $1 AND status IN ('open', 'full', 'in_progress'))",
+        "SELECT EXISTS(SELECT 1 FROM games WHERE court_slot_id = $1 AND status != 'cancelled')",
     )
     .bind(slot_id)
     .fetch_one(&mut *conn)
@@ -349,8 +339,9 @@ pub async fn insert_game(
     description: Option<&str>,
 ) -> sqlx::Result<GameRow> {
     sqlx::query_as::<_, GameRow>(
-        r#"INSERT INTO games (court_slot_id, creator_id, sport_type, max_players, description)
-           VALUES ($1, $2, $3, $4, $5)
+        r#"INSERT INTO games (court_slot_id, creator_id, sport_type, max_players, description, total_amount)
+           SELECT $1, $2, $3, $4, $5, c.price_per_slot
+           FROM court_slots s JOIN courts c ON c.id = s.court_id WHERE s.id = $1
            RETURNING id, court_slot_id, creator_id, sport_type, max_players, description, status, created_at"#,
     )
     .bind(court_slot_id)

@@ -1,0 +1,54 @@
+name: Mobile
+on:
+  push:
+    paths: ['mobile/**', '.github/workflows/mobile.yml']
+  pull_request:
+    paths: ['mobile/**', '.github/workflows/mobile.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      CI: '1'
+      EXPO_PUBLIC_API_URL: https://api.example.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: mobile/.nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm install --global npm@11.19.0
+      - run: npm ci
+      - run: npm run check:expo
+      - run: npm run doctor
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run export:web
+      - run: npm run export:android
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run test:e2e:static
+      - name: Report upstream dependency advisories
+        id: audit
+        continue-on-error: true
+        run: npm audit --json > npm-audit.json
+      - name: Flag unresolved advisories
+        if: steps.audit.outcome == 'failure'
+        run: echo '::warning::Upstream mobile advisories remain. Review npm-audit.json and docs/mobile-readiness.md before release.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-verification
+          path: |
+            mobile/playwright-report
+            mobile/playwright-report-static
+            mobile/test-results
+            mobile/npm-audit.json
+            artifacts/mobile-qa
+          if-no-files-found: ignore

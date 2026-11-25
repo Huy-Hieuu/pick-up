@@ -20,7 +20,13 @@ where
 {
     let opt: Option<String> = Option::deserialize(de)?;
     match opt {
-        Some(s) => s.parse::<f64>().map(Some).map_err(de::Error::custom),
+        Some(s) => {
+            let value = s.parse::<f64>().map_err(de::Error::custom)?;
+            if !value.is_finite() {
+                return Err(de::Error::custom("number must be finite"));
+            }
+            Ok(Some(value))
+        }
         None => Ok(None),
     }
 }

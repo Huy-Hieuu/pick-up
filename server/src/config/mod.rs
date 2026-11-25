@@ -1,3 +1,3 @@
 pub mod settings;
 
-pub use settings::{Settings, DatabaseSettings, RedisSettings, EmailSettings, S3Settings};
+pub use settings::{DatabaseSettings, EmailSettings, RedisSettings, S3Settings, Settings};

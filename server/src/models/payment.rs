@@ -22,6 +22,7 @@ pub enum PaymentStatus {
     Paid,
     Expired,
     Refunded,
+    Disputed,
 }
 
 // ── Database row type ──────────────────────────────────────────
@@ -55,4 +56,44 @@ pub struct PaymentResponse {
     pub provider: PaymentProvider,
     pub status: PaymentStatus,
     pub pay_url: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MomoWebhook {
+    pub partner_code: String,
+    pub order_id: String,
+    pub request_id: String,
+    pub amount: i64,
+    pub order_info: String,
+    pub order_type: String,
+    #[serde(default)]
+    pub trans_id: i64,
+    pub result_code: i32,
+    pub message: String,
+    pub response_time: i64,
+    #[serde(default)]
+    pub extra_data: String,
+    #[serde(default)]
+    pub pay_type: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ZaloPayWebhook {
+    pub data: String,
+    pub mac: String,
+    #[serde(rename = "type")]
+    pub callback_type: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ZaloPayCallbackData {
+    pub app_id: i64,
+    pub app_trans_id: String,
+    pub app_time: i64,
+    pub amount: i64,
+    pub zp_trans_id: i64,
+    pub server_time: i64,
 }

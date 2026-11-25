@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::borrow::Cow;
 use sqlx::FromRow;
+use std::borrow::Cow;
 use uuid::Uuid;
 use validator::{Validate, ValidateUrl};
 

@@ -27,17 +27,12 @@ where
 {
     type Rejection = ValidatedRejection;
 
-    async fn from_request(
-        req: axum::extract::Request,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(value) = Json::<T>::from_request(req, state)
             .await
             .map_err(ValidatedRejection::JsonRejection)?;
 
-        value
-            .validate()
-            .map_err(ValidatedRejection::Validation)?;
+        value.validate().map_err(ValidatedRejection::Validation)?;
 
         Ok(ValidatedJson(value))
     }
@@ -60,17 +55,12 @@ where
 {
     type Rejection = ValidatedRejection;
 
-    async fn from_request(
-        req: axum::extract::Request,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
         let Query(value) = Query::<T>::from_request(req, state)
             .await
             .map_err(ValidatedRejection::QueryRejection)?;
 
-        value
-            .validate()
-            .map_err(ValidatedRejection::Validation)?;
+        value.validate().map_err(ValidatedRejection::Validation)?;
 
         Ok(ValidatedQuery(value))
     }

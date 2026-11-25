@@ -1,0 +1,14 @@
+{
+  "dump_bytes": 41817,
+  "ready": 200,
+  "redis_persistence": "not verified; preview uses appendonly no",
+  "database": "pickup_restore_20261005_dc1c4c78",
+  "counts": [
+    "courts=3",
+    "slots=24",
+    "migrations=14",
+    "users=3"
+  ],
+  "dump_exit": 0,
+  "restore_exit": 0
+}

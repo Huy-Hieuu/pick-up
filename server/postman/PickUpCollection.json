@@ -29,9 +29,35 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"phone\": \"0909123123\",\n  \"email\": \"test@example.com\",\n  \"display_name\": \"John Doe\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
             },
-            "description": "Register new user. Returns access_token + refresh_token.\n\n- phone: Vietnamese format (10 digits)\n- email: valid email\n- password: 8–128 characters"
+            "description": "Requests an email verification code and returns a generic 202. No user, phone reservation, password or session is created until verification succeeds."
+          }
+        },
+        {
+          "name": "POST /auth/verify-registration",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/verify-registration",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\",\n  \"password\": \"password123\",\n  \"phone\": \"0909123123\",\n  \"display_name\": \"John Doe\"\n}"
+            },
+            "description": "Consumes a single-use email OTP, creates the verified account with the owner's password and profile, and returns access/refresh tokens. Also reclaims legacy unverified accounts and revokes their previous sessions."
+          }
+        },
+        {
+          "name": "POST /auth/resend-registration-otp",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/auth/resend-registration-otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\"\n}"
+            },
+            "description": "Requests a registration OTP. The response is generic for unknown and already verified emails."
           }
         },
         {
@@ -44,7 +70,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
             },
-            "description": "Login. 5 failed attempts → 5 min lockout."
+            "description": "Verified email + password login. Unverified accounts cannot create sessions. Five attempts are allowed per 5-minute window."
           }
         },
         {
@@ -57,7 +83,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"test@example.com\"\n}"
             },
-            "description": "Send 6-digit OTP to email. Rate limited: 1 per 60 seconds per email."
+            "description": "Returns the same response for eligible and unknown addresses; queues a 6-digit OTP only for a verified account. Rate limited: 1 per 60 seconds per email."
           }
         },
         {
@@ -68,9 +94,9 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"test@example.com\",\n  \"phone\": \"0909123123\",\n  \"code\": \"123456\"\n}"
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"code\": \"123456\"\n}"
             },
-            "description": "Verify OTP. Max 3 attempts. Returns access_token + refresh_token.\n\nRequires existing account (no auto-creation)."
+            "description": "Sign in to an already verified account by consuming a purpose-specific email OTP. Max 3 attempts."
           }
         },
         {
@@ -439,9 +465,22 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"content_type\": \"image/jpeg\"\n}"
+              "raw": "{\n  \"content_type\": \"image/jpeg\",\n  \"content_length\": 245760\n}"
             },
-            "description": "Get presigned S3 upload URL for avatar.\n\n- content_type: image/jpeg | image/png | image/webp\n- Rate limited: 5 requests/min per user\n- URL expires in 15 minutes"
+            "description": "Get a presigned PUT to private quarantine. Send exact content_length and Content-Type, then POST /upload/avatar/complete with upload_id to validate the image and obtain its public URL. Size is 1 byte–8 MiB; 5 URLs per user per minute; URLs expire in 15 minutes."
+          }
+        },
+        {
+          "name": "POST /upload/avatar/complete",
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:8080/upload/avatar/complete",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer REPLACE_WITH_ACCESS_TOKEN" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"upload_id\": \"REPLACE_WITH_UPLOAD_ID\"\n}" },
+            "description": "Validates and re-encodes your quarantined image. Returns public_url on success; assign it via PATCH /auth/me. Completion is idempotent."
           }
         }
       ]

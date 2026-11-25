@@ -74,8 +74,7 @@ pub struct Pagination {
 
 impl Pagination {
     pub fn offset(&self) -> i64 {
-        (self.page().saturating_sub(1))
-            .saturating_mul(self.effective_limit())
+        (self.page().saturating_sub(1)).saturating_mul(self.effective_limit())
     }
 
     pub fn page(&self) -> i64 {
@@ -91,11 +90,17 @@ impl Pagination {
 pub struct ListCourtsQuery {
     pub sport_type: Option<SportType>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
+    #[validate(range(min = -90.0, max = 90.0))]
     pub lat: Option<f64>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
+    #[validate(range(min = -180.0, max = 180.0))]
     pub lng: Option<f64>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
-    #[validate(range(min = 0.1, max = 50.0, message = "radius_km must be between 0.1 and 50"))]
+    #[validate(range(
+        min = 0.1,
+        max = 50.0,
+        message = "radius_km must be between 0.1 and 50"
+    ))]
     pub radius_km: Option<f64>,
     #[serde(flatten)]
     pub pagination: Pagination,

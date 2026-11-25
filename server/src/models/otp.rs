@@ -16,8 +16,6 @@ pub struct SendOtpRequest {
 pub struct VerifyOtpRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
-    #[validate(custom(function = "is_valid_vn_phone"))]
-    pub phone: String,
     #[validate(length(min = 6, max = 6))]
     pub code: String,
 }
@@ -32,10 +30,24 @@ pub struct RefreshTokenRequest {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct RegisterRequest {
-    #[validate(custom(function = "is_valid_vn_phone"))]
-    pub phone: String,
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct EmailRequest {
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct VerifyRegistrationRequest {
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+    #[validate(length(min = 6, max = 6))]
+    pub code: String,
+    #[validate(custom(function = "is_valid_vn_phone"))]
+    pub phone: String,
     #[validate(length(min = 1, max = 50))]
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
@@ -43,10 +55,18 @@ pub struct RegisterRequest {
     pub password: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RegistrationPending {
+    pub email: String,
+    pub expires_in: i64,
+    pub message: &'static str,
+}
+
 #[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
+    #[validate(length(min = 1, max = 128))]
     pub password: String,
 }
 
@@ -73,6 +93,7 @@ pub struct VerifyResetOtpResponse {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SetNewPasswordRequest {
+    #[validate(length(min = 64, max = 64))]
     pub reset_token: String,
     #[validate(length(min = 8, max = 128, message = "Password must be 8–128 characters"))]
     pub new_password: String,

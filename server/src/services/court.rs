@@ -5,8 +5,8 @@ use uuid::Uuid;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::models::court::{
-    BookSlotRequest, BookedSlotResponse, CourtDetail, CourtWithDistance, ListCourtsQuery, Paginated,
-    SlotListResponse, SlotItem, SlotStatus,
+    BookSlotRequest, BookedSlotResponse, CourtDetail, CourtWithDistance, ListCourtsQuery,
+    Paginated, SlotItem, SlotListResponse, SlotStatus,
 };
 
 /// Court & slot service.
@@ -37,11 +37,17 @@ impl CourtService {
             (Some(lat), Some(lng)) => {
                 let radius = query.radius_km.unwrap_or(10.0);
                 let courts = db::courts::list_courts_near(
-                    pool, query.sport_type, lat, lng, radius, limit, offset,
+                    pool,
+                    query.sport_type,
+                    lat,
+                    lng,
+                    radius,
+                    limit,
+                    offset,
                 )
                 .await?;
-                let total = db::courts::count_courts_near(pool, query.sport_type, lat, lng, radius)
-                    .await?;
+                let total =
+                    db::courts::count_courts_near(pool, query.sport_type, lat, lng, radius).await?;
                 (courts, total)
             }
             _ => {
@@ -91,10 +97,18 @@ impl CourtService {
     ) -> AppResult<BookedSlotResponse> {
         let mut tx = pool.begin().await.map_err(AppError::Database)?;
 
+        // Serialize all bookings/joins by this user, not only requests for one slot.
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
         let slot = db::courts::find_slot_for_update(&mut tx, slot_id, court_id).await?;
 
         if slot.status != SlotStatus::Available {
-            return Err(AppError::Conflict("This time slot is already booked".into()));
+            return Err(AppError::Conflict(
+                "This time slot is already booked".into(),
+            ));
         }
 
         if slot.start_time <= Utc::now() {
@@ -103,8 +117,13 @@ impl CourtService {
 
         // Check for overlapping bookings by the same user.
         let overlap = db::courts::has_overlapping_booking_tx(
-            &mut tx, user_id, slot.id, slot.start_time, slot.end_time,
-        ).await?;
+            &mut tx,
+            user_id,
+            slot.id,
+            slot.start_time,
+            slot.end_time,
+        )
+        .await?;
         if overlap {
             return Err(AppError::Conflict(
                 "You already have a booking that overlaps with this time slot".into(),

@@ -1,5 +1,10 @@
 # Phase 1 — Game Service
 
+> The WebSocket section below is the original design sketch. The implemented
+> version 1 protocol sends full replacement snapshots with cross-instance
+> commit notifications. Use [the current protocol](backend-realtime.md) for
+> mobile integration, access rules, close codes and recovery behavior.
+
 The social core of PickUp. A "game" is a pickup sports session tied to a booked court slot. Players join, the game has a real-time WebSocket lobby, and once enough players join, bills are automatically split.
 
 ---
