@@ -1,11 +1,11 @@
 # Mobile validation — 2026-11-25
 
-Final verification ran after the static web server, API configuration, session/bookmark resilience, web sharing, accessibility, centered result/state/form layouts, lightweight motion system, reduced-motion support, browser header/control alignment, sport fallback artwork, split desktop auth layout, profile activity panel, route-aware browser titles, optimized WebP hero, and Expo SDK 57 patch-alignment changes.
+Final verification ran after the static web server, API configuration, session/bookmark resilience, web sharing, accessibility, centered result/state/form layouts, lightweight motion system, reduced-motion support, browser header/control alignment, redesigned image-led auth frame with compact viewport fitting, sport fallback artwork, profile activity panel, route-aware browser titles, optimized WebP hero, and Expo SDK 57 patch-alignment changes.
 
 | Check | Result |
 | --- | --- |
 | Locked installation | `npm ci` passed with Node 22.23.3 / npm 11.19.0. |
-| Browser suite | **104 passed, 2 intentionally skipped**, 106 cases total. Includes 14 centering/header/touch-target/reduced-motion regression cases. The duplicate desktop full-stack case skips to avoid concurrent mutation of one disposable preview account. |
+| Browser suite | **106 passed, 2 intentionally skipped**, 108 cases total. Includes 16 centering/header/login/touch-target/reduced-motion regression cases. The duplicate desktop full-stack case skips to avoid concurrent mutation of one disposable preview account. |
 | Real API full-stack journey | **1 passed** with no API route mocking: readiness, login, booking, game creation, authenticated history and cancellation cleanup. |
 | Exported-site deep link | **1 passed** against the production web export. |
 | Unit tests | **49 passed** across six test files. |

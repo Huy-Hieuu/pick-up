@@ -96,6 +96,22 @@ test('desktop header active text is vertically centered in its pill', async ({ p
   expect(Math.abs(centers.link - centers.text)).toBeLessThanOrEqual(1);
 });
 
+test('login form fits the embedded browser viewport without touching the signup panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1154, height: 785 });
+  await mockApi(page);
+  await page.goto('/login');
+  const button = page.getByRole('button', { name: 'Đăng nhập', exact: true }).last();
+  const signup = page.getByRole('link', { name: /Tạo tài khoản/ });
+  await expect(button).toBeVisible();
+  await expect(signup).toBeInViewport();
+  await page.waitForTimeout(700);
+  const buttonBox = await button.boundingBox();
+  const signupBox = await signup.boundingBox();
+  expect(buttonBox).not.toBeNull();
+  expect(signupBox).not.toBeNull();
+  expect(signupBox!.y - (buttonBox!.y + buttonBox!.height)).toBeGreaterThanOrEqual(24);
+});
+
 test('mobile primary buttons keep their accessible touch height', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
