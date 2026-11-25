@@ -8,6 +8,7 @@ for (const width of [320, 390, 768, 1440]) {
     page.on('pageerror', (error) => failures.push(error.message));
     await mockApi(page);
     await page.goto('/');
+    await expect(page).toHaveTitle('PickUp — Ra sân, nhập hội.');
     await expect(page.getByText(court.name, { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Ra sân.', { exact: false }).first()).toBeVisible();
     for (const name of ['Khám phá', 'Trận đấu', 'Đã lưu']) await expect(page.getByRole('link', { name, exact: true })).toBeVisible();

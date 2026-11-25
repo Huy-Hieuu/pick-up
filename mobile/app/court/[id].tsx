@@ -31,6 +31,7 @@ import {
   ui,
 } from "../../src/components/ui";
 import { formError } from "../../src/components/AuthFrame";
+import { SportArtwork } from "../../src/components/SportArtwork";
 
 export default function CourtDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -209,10 +210,12 @@ export default function CourtDetail() {
             onError={() => setPhotoFailed(true)}
           />
         ) : (
-          <View style={{ alignItems: "center", gap: 15 }}>
-            <Icon name="sun" color={palette.green} size={55} />
-            <AppText style={type.heading}>{sportName(data.sport_type)}</AppText>
-          </View>
+          <>
+            <SportArtwork sport={data.sport_type} />
+            <View style={{ position: "absolute", bottom: 18, backgroundColor: palette.white, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 }}>
+              <AppText style={{ fontFamily: "Inter_600SemiBold", color: palette.green }}>{sportName(data.sport_type)}</AppText>
+            </View>
+          </>
         )}
       </View>
       <View

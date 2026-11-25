@@ -43,7 +43,7 @@ import { formError } from "../../src/components/AuthFrame";
 import { GameCard } from "../../src/components/GameCard";
 
 export default function Profile() {
-  const { session, ready, request, logout, updateUser } = useSession();
+  const { session, ready, request, logout, updateUser, saved } = useSession();
   const { width } = useWindowDimensions();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -280,6 +280,7 @@ export default function Profile() {
     profile.data ? profile.data.avatar_url : session?.user.avatar_url ?? null,
   );
   useEffect(() => setAvatarFailed(false), [avatar]);
+  const wide = width >= 1000;
   const columns = width >= 1000 ? 3 : width >= 670 ? 2 : 1;
   const cardWidth =
     (Math.min(width, 1240) - (width < 600 ? 40 : 80) - (columns - 1) * 20) /
@@ -310,7 +311,8 @@ export default function Profile() {
       </AppText>
       {error && <Message error>{error}</Message>}
       {notice && <Message>{notice}</Message>}
-      <Card style={{ maxWidth: 680, width: "100%" }}>
+      <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
+      <Card style={{ flex: 1, maxWidth: 680, width: "100%" }}>
         <View style={ui.row}>
           <View
             style={{
@@ -405,6 +407,27 @@ export default function Profile() {
           />
         </View>
       </Card>
+      {wide && (
+        <Card style={{ width: 320, gap: 18 }}>
+          <AppText accessibilityRole="header" style={type.heading}>Hoạt động của bạn</AppText>
+          <AppText style={{ color: palette.muted }}>Mọi booking và trận đấu được lấy trực tiếp từ tài khoản.</AppText>
+          {[
+            { label: "Sân đã lưu", value: saved.length, icon: "heart" as const },
+            { label: "Booking hiển thị", value: bookings.data?.total ?? 0, icon: "calendar" as const },
+            { label: "Trận của tôi", value: games.data?.total ?? 0, icon: "users" as const },
+          ].map((item) => (
+            <View key={item.label} style={[ui.row, { justifyContent: "space-between" }]}>
+              <View style={ui.row}><Icon name={item.icon} color={palette.green} size={18} /><AppText style={{ color: palette.muted }}>{item.label}</AppText></View>
+              <AppText style={{ fontFamily: "Inter_700Bold", fontSize: 20 }}>{item.value}</AppText>
+            </View>
+          ))}
+          <View style={ui.divider} />
+          <Button title="Khám phá sân" secondary icon="compass" onPress={() => router.push("/explore")} />
+          <Button title="Tìm trận để tham gia" secondary icon="users" onPress={() => router.push("/games")} />
+          <Button title="Xem sân đã lưu" secondary icon="heart" onPress={() => router.push("/saved")} />
+        </Card>
+      )}
+      </View>
       <View style={{ gap: 18 }}>
         <SectionTitle
           title="Lịch đặt sân của tôi"

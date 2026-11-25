@@ -16,6 +16,22 @@ const destinations = [
   { href: "/saved", label: "Đã lưu", icon: "heart" },
   { href: "/profile", label: "Tài khoản", icon: "user" },
 ] as const;
+function titleForPath(path: string) {
+  if (path === "/") return "PickUp — Ra sân, nhập hội.";
+  if (path.startsWith("/court/")) return "Chi tiết sân · PickUp";
+  if (path.startsWith("/game/create")) return "Tạo trận · PickUp";
+  if (path.startsWith("/game/")) return "Chi tiết trận · PickUp";
+  const titles: Record<string, string> = {
+    "/explore": "Khám phá sân · PickUp",
+    "/games": "Tìm đồng đội · PickUp",
+    "/saved": "Sân đã lưu · PickUp",
+    "/profile": "Tài khoản · PickUp",
+    "/login": "Đăng nhập · PickUp",
+    "/register": "Tạo tài khoản · PickUp",
+    "/reset-password": "Đặt lại mật khẩu · PickUp",
+  };
+  return titles[path] || "Không tìm thấy trang · PickUp";
+}
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -37,6 +53,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
   const desktop = width >= 850;
   const auth = ["/login", "/register", "/reset-password"].includes(path);
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    document.title = titleForPath(path);
+  }, [path]);
   return (
     <View
       style={{
@@ -181,9 +201,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 style={{
                   flex: 1,
                   minHeight: 50,
+                  marginHorizontal: 4,
+                  paddingVertical: 4,
+                  borderRadius: 16,
                   alignItems: "center",
                   justifyContent: "center",
                   gap: 5,
+                  backgroundColor: selected ? palette.pale : "transparent",
                 }}
               >
                 <Icon

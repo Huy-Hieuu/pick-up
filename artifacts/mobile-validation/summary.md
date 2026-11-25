@@ -1,6 +1,6 @@
 # Mobile validation — 2026-11-25
 
-Final verification ran after the static web server, API configuration, session/bookmark resilience, web sharing, accessibility, image fallback, and Expo SDK 57 patch-alignment changes.
+Final verification ran after the static web server, API configuration, session/bookmark resilience, web sharing, accessibility, sport fallback artwork, split desktop auth layout, profile activity panel, route-aware browser titles, optimized WebP hero, and Expo SDK 57 patch-alignment changes.
 
 | Check | Result |
 | --- | --- |
@@ -12,8 +12,8 @@ Final verification ran after the static web server, API configuration, session/b
 | TypeScript | `npm run typecheck` passed. |
 | Expo dependency alignment | `npm run check:expo` passed; dependencies up to date. |
 | Expo Doctor | **21/21 passed**. |
-| Production web export | Passed; approximately **1.3 MB** JavaScript bundle. |
-| Android production JavaScript export | Passed; **1320 modules, 33 assets**, approximately **2.9 MB** Hermes bundle. |
+| Production web export | Passed; approximately **1.3 MB** JavaScript bundle and a **230 KB** WebP hero (replacing the 2.5 MB PNG). |
+| Android production JavaScript export | Passed; **1321 modules, 33 assets**, approximately **2.9 MB** Hermes bundle. |
 | Native plugin introspection | Passed; Android activity uses `adjustResize`, branded splash theme resolves, camera/microphone permissions are marked for removal, and location permissions are included. |
 | Dependency security audit | **6 affected package entries: 3 high, 3 moderate**; `decode-uri-component`/`query-string` and `minimatch`/`@expo/fingerprint` remain. See `../../docs/mobile-readiness.md` and `../mobile-audit.json`. |
 
