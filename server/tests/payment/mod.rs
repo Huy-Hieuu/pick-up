@@ -22,6 +22,59 @@ use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn completed_game_collects_unpaid_share_through_provider(pool: PgPool) {
+    use pickup_server::{models::game::GameStatus, services::BillSplitService};
+    let psp = ProviderServer::start().await;
+    let state = api(pool.clone(), &psp).await;
+    let creator = user(&pool, "Creator").await;
+    let joiner = user(&pool, "Joiner").await;
+    let game = game(&pool, creator, 3).await;
+    GameService::join_game(&pool, game, joiner).await.unwrap();
+    for (index, payer) in [creator, joiner].into_iter().enumerate() {
+        if index == 1 {
+            GameService::update_status(&pool, game, creator, GameStatus::InProgress)
+                .await
+                .unwrap();
+            GameService::update_status(&pool, game, creator, GameStatus::Completed)
+                .await
+                .unwrap();
+            assert_eq!(
+                BillSplitService::calculate(&pool, game)
+                    .await
+                    .unwrap()
+                    .remaining_total,
+                300000
+            );
+        }
+        let order = initiate(&state, game, payer, PaymentProvider::Momo)
+            .await
+            .unwrap();
+        let request = psp.mock.requests("momo").pop().unwrap();
+        let callback = momo_callback(
+            &state.settings,
+            request["orderId"].as_str().unwrap(),
+            i64::from(order.amount),
+            9000 + index as i64,
+            0,
+        );
+        PaymentService::handle_momo_webhook(&pool, &state.settings, &callback.to_string())
+            .await
+            .unwrap();
+        PaymentService::handle_momo_webhook(&pool, &state.settings, &callback.to_string())
+            .await
+            .unwrap();
+    }
+    let split = BillSplitService::calculate(&pool, game).await.unwrap();
+    assert_eq!(split.paid_total, 600001);
+    assert_eq!(split.remaining_total, 0);
+    assert!(initiate(&state, game, joiner, PaymentProvider::Momo)
+        .await
+        .is_err());
+    assert_eq!(psp.mock.requests("momo").len(), 2);
+}
+
 #[derive(Clone, Default)]
 struct MockPsp {
     requests: Arc<Mutex<Vec<(String, Value)>>>,

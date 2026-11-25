@@ -795,3 +795,50 @@ async fn registration_code_creates_at_most_one_account_under_concurrency(pool: P
     .unwrap();
     assert_eq!(sessions, 1);
 }
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn logout_revokes_only_the_current_session(pool: PgPool) {
+    let auth = register(&pool).await;
+    let claims = decode_token(&auth.access_token, SECRET, "access").unwrap();
+    let user_id = Uuid::parse_str(&claims.sub).unwrap();
+    let other = AuthService::login(
+        &pool,
+        &redis().await,
+        pickup_server::models::otp::LoginRequest {
+            email: auth.user.email.clone().unwrap(),
+            password: "valid-password-123".into(),
+        },
+        SECRET,
+        15,
+        30,
+    )
+    .await
+    .unwrap();
+    AuthService::logout(&pool, user_id, claims.sid)
+        .await
+        .unwrap();
+    assert!(authenticate_access_token(&pool, &auth.access_token, SECRET)
+        .await
+        .is_err());
+    assert!(
+        AuthService::refresh_token(&pool, &redis().await, &auth.refresh_token, SECRET, 15, 30)
+            .await
+            .is_err()
+    );
+    assert!(
+        authenticate_access_token(&pool, &other.access_token, SECRET)
+            .await
+            .is_ok()
+    );
+    assert!(AuthService::refresh_token(
+        &pool,
+        &redis().await,
+        &other.refresh_token,
+        SECRET,
+        15,
+        30
+    )
+    .await
+    .is_ok());
+}

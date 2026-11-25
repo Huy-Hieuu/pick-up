@@ -240,3 +240,62 @@ pub(super) async fn rotate_tokens(
         user: user.into(),
     })
 }
+
+#[cfg(test)]
+mod saturation_tests {
+    use super::*;
+    use redis::AsyncCommands;
+
+    #[sqlx::test]
+    #[ignore = "requires disposable PostgreSQL and Redis"]
+    async fn busy_reset_preserves_grant_for_successful_retry(pool: PgPool) {
+        let redis = redis::Client::open(std::env::var("TEST_REDIS_URL").unwrap())
+            .unwrap()
+            .get_connection_manager()
+            .await
+            .unwrap();
+        let old_hash = db::hash_password("old-password-123").unwrap();
+        let user = db::create_user(
+            &pool,
+            &Uuid::new_v4().to_string()[..20],
+            &format!("{}@example.test", Uuid::new_v4()),
+            Some(&old_hash),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let token = Uuid::new_v4().to_string();
+        let key = format!("reset_token:{token}");
+        let grant = serde_json::to_string(&(user.id, Some(&old_hash))).unwrap();
+        let _: () = redis.clone().set_ex(&key, &grant, 300).await.unwrap();
+        let request = || crate::models::otp::SetNewPasswordRequest {
+            reset_token: token.clone(),
+            new_password: "new-password-456".into(),
+        };
+        let permits = PASSWORD_WORK.acquire_many(4).await.unwrap();
+        assert!(matches!(
+            crate::services::AuthService::set_new_password(&pool, &redis, request()).await,
+            Err(AppError::TooManyRequests(_))
+        ));
+        let retained: String = redis.clone().get(&key).await.unwrap();
+        assert_eq!(retained, grant);
+        let unchanged = db::find_user_by_id(&pool, user.id).await.unwrap().unwrap();
+        assert_eq!(unchanged.password_hash.as_deref(), Some(old_hash.as_str()));
+        drop(permits);
+        crate::services::AuthService::set_new_password(&pool, &redis, request())
+            .await
+            .unwrap();
+        let changed = db::find_user_by_id(&pool, user.id).await.unwrap().unwrap();
+        assert!(db::verify_password(
+            "new-password-456",
+            changed.password_hash.as_deref().unwrap()
+        )
+        .unwrap());
+        assert!(
+            crate::services::AuthService::set_new_password(&pool, &redis, request())
+                .await
+                .is_err()
+        );
+    }
+}

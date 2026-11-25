@@ -134,10 +134,10 @@ impl GameService {
                 "Cannot create a game for a past slot".into(),
             ));
         }
-        if db::games::has_overlapping_game_tx(
+        if db::courts::has_overlapping_booking_tx(
             &mut tx,
             creator_id,
-            Uuid::nil(),
+            locked_slot.id,
             locked_slot.start_time,
             locked_slot.end_time,
         )

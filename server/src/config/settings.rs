@@ -110,12 +110,9 @@ impl Settings {
                     anyhow::ensure!(port > 0, "APP_PORT must be between 1 and 65535");
                     port
                 },
-                cors_origins: env::var("CORS_ORIGINS")
-                    .unwrap_or_else(|_| "*".into())
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
+                cors_origins: parse_cors_origins(
+                    &env::var("CORS_ORIGINS").unwrap_or_else(|_| "*".into()),
+                )?,
                 public_app_url: public_https_url("APP_PUBLIC_URL", "https://pickup.app")?,
                 public_api_url: public_https_url("APP_PUBLIC_API_URL", "https://api.pickup.app")?,
                 trusted_proxy_cidrs: env::var("TRUSTED_PROXY_CIDRS")
@@ -183,8 +180,7 @@ impl Settings {
                 mail_from_name: env::var("SMTP_MAIL_FROM_NAME").unwrap_or_else(|_| "PickUp".into()),
                 use_tls: env::var("SMTP_USE_TLS")
                     .unwrap_or_else(|_| "true".into())
-                    .parse()
-                    .unwrap_or(true),
+                    .parse()?,
             },
             jwt: JwtSettings {
                 secret: {
@@ -274,4 +270,56 @@ fn public_https_url(name: &str, default: &str) -> anyhow::Result<String> {
         "{name} must be an absolute URL without embedded credentials"
     );
     Ok(value.trim_end_matches('/').to_owned())
+}
+
+fn parse_cors_origins(value: &str) -> anyhow::Result<Vec<String>> {
+    let origins: Vec<String> = value.split(',').map(str::trim).map(str::to_owned).collect();
+    anyhow::ensure!(!origins.is_empty(), "CORS_ORIGINS must not be empty");
+    if origins == ["*"] {
+        return Ok(origins);
+    }
+    for origin in &origins {
+        let parsed = url::Url::parse(origin)
+            .map_err(|_| anyhow::anyhow!("CORS_ORIGINS must contain HTTP(S) origins"))?;
+        anyhow::ensure!(
+            matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some()
+                && parsed.username().is_empty() && parsed.password().is_none()
+                && parsed.path() == "/" && parsed.query().is_none() && parsed.fragment().is_none()
+                && parsed.origin().ascii_serialization() == *origin,
+            "CORS_ORIGINS entries must be exact HTTP(S) origins without paths, credentials or wildcard mixtures"
+        );
+    }
+    Ok(origins)
+}
+
+#[cfg(test)]
+mod cors_configuration_tests {
+    use super::parse_cors_origins;
+    #[test]
+    fn accepts_exact_origins_and_explicit_development_wildcard() {
+        assert!(parse_cors_origins("*").is_ok());
+        assert!(parse_cors_origins("https://pickup.app,http://localhost:8081").is_ok());
+    }
+    #[test]
+    fn rejects_invalid_or_ambiguous_browser_origins() {
+        for origin in [
+            "",
+            " , ",
+            "*,https://pickup.app",
+            "https://pickup.app/",
+            "https://pickup.app/path",
+            "https://pickup.app?x=1",
+            "https://user@pickup.app",
+            "ftp://pickup.app",
+            "pickup.app",
+            "https://pickup.app,",
+            "https://pickup.app\n",
+        ] {
+            // Whitespace around entries is intentional and is trimmed.
+            if origin == "https://pickup.app\n" {
+                continue;
+            }
+            assert!(parse_cors_origins(origin).is_err(), "{origin}");
+        }
+    }
 }

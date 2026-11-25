@@ -1,0 +1,177 @@
+   Compiling pickup-server v0.1.0 (C:\Users\tonminh123\Documents\GitHub\pick-up\server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.54s
+     Running unittests src\lib.rs (target\debug\deps\pickup_server-ec0182b7b35a4edf.exe)
+
+running 91 tests
+test config::settings::cors_configuration_tests::accepts_exact_origins_and_explicit_development_wildcard ... ok
+test config::settings::cors_configuration_tests::rejects_invalid_or_ambiguous_browser_origins ... ok
+test db::users::tests::hash_password_produces_valid_argon2_hash ... ok
+test db::users::tests::hash_password_uses_random_salts ... ok
+test db::users::tests::verify_password_correct ... ok
+test db::users::tests::verify_password_handles_empty_password ... ok
+test db::users::tests::verify_password_handles_long_password ... ok
+test db::users::tests::verify_password_handles_unicode ... ok
+test db::users::tests::verify_password_incorrect ... ok
+test db::users::tests::verify_password_rejects_empty_hash ... ok
+test db::users::tests::verify_password_rejects_garbage_hash ... ok
+test error::app_error::tests::bad_request_maps_to_400 ... ok
+test error::app_error::tests::conflict_maps_to_409 ... ok
+test error::app_error::tests::database_pool_timeout_maps_to_503 ... ok
+test error::app_error::tests::database_row_not_found_maps_to_404 ... ok
+test error::app_error::tests::error_response_is_valid_json ... ok
+test error::app_error::tests::forbidden_maps_to_403 ... ok
+test error::app_error::tests::internal_error_hides_details ... ok
+test error::app_error::tests::internal_maps_to_500 ... ok
+test error::app_error::tests::not_found_maps_to_404 ... ok
+test error::app_error::tests::payment_required_maps_to_402 ... ok
+test error::app_error::tests::rate_limit_returns_retry_after ... ok
+test error::app_error::tests::unauthorized_maps_to_401 ... ok
+test error::app_error::tests::unimplemented_maps_to_501 ... ok
+test error::app_error::tests::unprocessable_maps_to_422 ... ok
+test extractors::auth::tests::access_and_refresh_tokens_have_different_types ... ok
+test extractors::auth::tests::access_token_contains_correct_claims ... ok
+test extractors::auth::tests::access_token_has_valid_expiry ... ok
+test extractors::auth::tests::access_token_rejects_wrong_secret ... ok
+test extractors::auth::tests::auth_user_claims_accessor ... ok
+test extractors::auth::tests::auth_user_extracts_user_id ... ok
+test extractors::auth::tests::refresh_token_contains_correct_type ... ok
+test extractors::auth::tests::refresh_token_expiry_is_in_days ... ok
+test extractors::validated::tests::accepts_plus84_prefix_mobile ... ok
+test extractors::validated::tests::accepts_various_mobile_prefixes ... ok
+test extractors::validated::tests::accepts_zero_prefix_mobile ... ok
+test extractors::validated::tests::query_rejection_maps_to_bad_request ... ok
+test extractors::validated::tests::rejects_empty_string ... ok
+test extractors::validated::tests::rejects_letters ... ok
+test extractors::validated::tests::rejects_no_prefix ... ok
+test extractors::validated::tests::rejects_special_characters ... ok
+test extractors::validated::tests::rejects_too_long ... ok
+test extractors::validated::tests::rejects_too_short ... ok
+test extractors::validated::tests::rejects_wrong_country_code ... ok
+test jobs::email::tests::deserialize_rejects_invalid_json ... ok
+test jobs::email::tests::deserialize_rejects_missing_fields ... ok
+test jobs::email::tests::handles_special_characters_in_subject ... ok
+test jobs::email::tests::handles_unicode_in_body ... ok
+test jobs::email::tests::leased_message_is_recovered_after_consumer_crash_and_ack_is_atomic ... ok
+test jobs::email::tests::otp_email_body_contains_code ... ok
+test jobs::email::tests::retries_are_delayed_and_dead_letters_redact_otp_content ... ok
+test jobs::email::tests::serialize_deserialize_roundtrip ... ok
+test jobs::email::tests::serialize_produces_valid_json ... ok
+test jobs::email::transport_validation_tests::malformed_sender_and_zero_port_fail_before_accepting_email_jobs ... ok
+test middleware::rate_limit::tests::malformed_forwarding_header_from_a_trusted_proxy_is_rejected ... ok
+test middleware::rate_limit::tests::trusted_proxy_chain_uses_nearest_untrusted_hop ... ok
+test middleware::rate_limit::tests::untrusted_forwarding_headers_are_ignored ... ok
+test middleware::rate_limit::tests::untrusted_rightmost_proxy_and_spoofed_left_entries_are_ignored ... ok
+test models::user::tests::patch_value_default_is_absent ... ok
+test models::user::tests::patch_value_roundtrip_json ... ok
+test routes::games::tests::sport_display_name_is_lowercase_no_underscores ... ok
+test routes::games::tests::sport_display_name_mini_football ... ok
+test routes::games::tests::sport_display_name_pickleball ... ok
+test services::auth_security::saturation_tests::busy_reset_preserves_grant_for_successful_retry ... ok
+test services::bill_split::tests::fully_paid_members_are_never_recharged_for_a_deficit ... ok
+test services::bill_split::tests::overpayment_fails_closed_without_integer_overflow ... ok
+test services::bill_split::tests::splits_conserve_every_dong_across_remainders ... ok
+test services::bill_split::tests::test_equal_split ... ok
+test services::bill_split::tests::test_negative_players ... ok
+test services::bill_split::tests::test_negative_total ... ok
+test services::bill_split::tests::test_uneven_split ... ok
+test services::bill_split::tests::test_zero_players ... ok
+test services::payment_provider::tests::hmac_sha256_matches_rfc4231_and_rejects_modified_signatures ... ok
+test services::payment_provider::tests::payment_urls_must_stay_on_https_provider_hosts ... ok
+test services::payment_provider::tests::uncertain_provider_create_results_do_not_release_the_order ... ok
+test services::upload::tests::allowed_types_match_map ... ok
+test services::upload::tests::image_bytes_must_match_declared_format_and_decode ... ok
+test services::upload::tests::maps_jpeg_to_jpg ... ok
+test services::upload::tests::maps_png_to_png ... ok
+test services::upload::tests::maps_webp_to_webp ... ok
+test services::upload::tests::object_key_format ... ok
+test services::upload::tests::oversized_dimensions_are_rejected_and_valid_avatars_are_resized ... ok
+test services::upload::tests::public_url_no_double_slash ... ok
+test services::upload::tests::public_url_trims_trailing_slash ... ok
+test services::upload::tests::rejects_empty_string ... ok
+test services::upload::tests::rejects_non_image ... ok
+test services::upload::tests::rejects_unsupported_mime ... ok
+test services::upload::tests::strips_boundary_parameter ... ok
+test services::upload::tests::strips_charset_parameter ... ok
+test ws::hub::tests::connection_limits_and_cleanup_are_exact ... ok
+test ws::hub::tests::rooms_are_isolated_and_changes_coalesce ... ok
+
+test result: ok. 91 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.68s
+
+     Running unittests src\main.rs (target\debug\deps\pickup_server-f315343764801c2f.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\auth_integration.rs (target\debug\deps\auth_integration-6774be17d5d20b51.exe)
+
+running 11 tests
+test email_owner_sets_password_when_verifying_registration ... ok
+test legacy_registration_reclaims_identity_and_revokes_old_sessions ... ok
+test logout_revokes_only_the_current_session ... ok
+test new_account_has_no_session_until_email_is_verified ... ok
+test otp_attempts_are_bounded_and_do_not_extend_expiry ... ok
+test otp_is_single_use_and_purpose_bound ... ok
+test password_reset_revokes_access_refresh_and_older_reset_grants ... ok
+test refresh_is_single_use_under_concurrency ... ok
+test registration_code_creates_at_most_one_account_under_concurrency ... ok
+test registration_preserves_international_phone_and_normalizes_local_phone ... ok
+test unknown_accounts_also_have_a_login_attempt_budget ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.31s
+
+     Running tests\billing_booking_integration.rs (target\debug\deps\billing_booking_integration-0aa96f396f74969c.exe)
+
+running 11 tests
+test adjacent_mixed_commitments_are_allowed ... ok
+test billing_is_private_and_active_payments_are_unique ... ok
+test cancelled_slot_can_be_booked_and_used_for_a_new_game ... ok
+test completed_game_keeps_its_booking_and_can_collect_remaining_balance ... ok
+test concurrent_bookings_cannot_double_book_one_slot ... ok
+test concurrent_bookings_cannot_overlap_for_one_player ... ok
+test concurrent_joins_cannot_overfill_game ... ok
+test concurrent_joins_cannot_overlap_for_one_player ... ok
+test mixed_booking_and_game_commitments_share_one_schedule ... ok
+test split_preserves_money_paid_contributions_and_price_snapshot ... ok
+test vietnam_day_boundaries_are_independent_of_database_timezone ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.93s
+
+     Running tests\http_integration.rs (target\debug\deps\http_integration-de33cb0f8ba5713b.exe)
+
+running 33 tests
+test avatar_upload_signature_binds_exact_length_and_rejects_oversize ... ok
+test cancelled_email_worker_does_not_block_on_an_empty_queue ... ok
+test email_worker_delivers_queued_otp_through_smtp ... ok
+test invalid_geo_queries_fail_before_database_functions ... ok
+test login_otp_request_does_not_reveal_account_state ... ok
+test media::quarantined_upload_is_sanitized_owned_and_idempotent ... ok
+test payment::amount_mismatch_and_late_capture_are_disputed_and_freeze_game ... ok
+test payment::callback_can_settle_before_the_provider_create_response ... ok
+test payment::completed_game_collects_unpaid_share_through_provider ... ok
+test payment::concurrent_initiations_and_uncertain_timeouts_reuse_one_order ... ok
+test payment::failed_orders_expire_retries_create_new_rows_and_stale_orders_expire ... ok
+test payment::late_zalopay_capture_is_recorded_when_a_replacement_is_pending ... ok
+test payment::one_provider_transaction_cannot_settle_two_concurrent_orders ... ok
+test payment::processing_callback_can_transition_to_paid_with_the_same_transaction ... ok
+test payment::provider_orders_are_signed_persisted_and_idempotent ... ok
+test payment::provider_queries_recover_lost_callbacks_and_sign_the_requests ... ok
+test payment::rejected_retry_does_not_release_an_earlier_uncertain_order ... ok
+test payment::unresolved_query_never_unlocks_a_charge_and_workers_claim_once ... ok
+test payment::zalopay_callback_mac_settles_once_and_conflicting_capture_is_disputed ... ok
+test payment::zalopay_duplicate_order_response_freezes_the_original_reservation ... ok
+test per_ip_rate_limit_is_shared_and_health_probes_are_exempt ... ok
+test personal_schedule_is_private_and_recoverable ... ok
+test readiness_fails_when_database_is_unavailable ... ok
+test realtime::committed_changes_reach_two_instances_with_consistent_splits ... ok
+test realtime::continuous_invalidations_do_not_starve_control_frames ... ok
+test realtime::handshake_checks_origin_membership_and_token_type ... ok
+test realtime::listener_reconnect_and_periodic_recheck_recover_a_missed_notification ... ok
+test realtime::revocation_closes_idle_connections_without_a_game_write ... ok
+test realtime::shutdown_closes_connected_lobbies ... ok
+test realtime::uncommitted_and_rolled_back_changes_never_leak ... ok
+test realtime::websocket_connection_limits_are_enforced_and_released ... ok
+test revoked_sessions_fail_in_middleware_and_fallback_extractor ... ok
+test router_enforces_auth_and_responds_to_health_and_body_limits ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 106.42s

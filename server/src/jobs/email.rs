@@ -101,6 +101,15 @@ pub(crate) fn build_smtp_transport(
 ) -> anyhow::Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> {
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 
+    anyhow::ensure!(
+        email_settings.smtp_port > 0,
+        "SMTP_PORT must be between 1 and 65535"
+    );
+    let _: lettre::message::Mailbox = format!(
+        "{} <{}>",
+        email_settings.mail_from_name, email_settings.mail_from
+    )
+    .parse()?;
     let credentials = Credentials::new(
         email_settings.smtp_username.clone(),
         email_settings.smtp_password.clone(),
@@ -652,5 +661,26 @@ mod tests {
             release_lease(&redis, &lease).await.unwrap();
         }
         assert!(!original.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod transport_validation_tests {
+    use super::*;
+    #[test]
+    fn malformed_sender_and_zero_port_fail_before_accepting_email_jobs() {
+        let mut settings = EmailSettings {
+            smtp_host: "localhost".into(),
+            smtp_port: 1025,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            mail_from: "invalid sender".into(),
+            mail_from_name: "PickUp".into(),
+            use_tls: false,
+        };
+        assert!(build_smtp_transport(&settings).is_err());
+        settings.mail_from = "test@example.com".into();
+        settings.smtp_port = 0;
+        assert!(build_smtp_transport(&settings).is_err());
     }
 }

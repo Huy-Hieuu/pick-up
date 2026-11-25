@@ -95,14 +95,42 @@ impl LobbyHub {
             );
         let mut listener = PgListener::connect_with(&listener_pool).await?;
         listener.listen(CHANNEL).await?;
+        let mut listener = Some(listener);
         let hub = self.clone();
         Ok(tokio::spawn(async move {
             let mut retry = 1;
             loop {
+                if listener.is_none() {
+                    let restored = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => break,
+                        result = async {
+                            let mut replacement = PgListener::connect_with(&listener_pool).await?;
+                            replacement.listen(CHANNEL).await?;
+                            Ok::<_, sqlx::Error>(replacement)
+                        } => result,
+                    };
+                    match restored {
+                        Ok(replacement) => {
+                            listener = Some(replacement);
+                            retry = 1;
+                            hub.invalidate_all();
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "Lobby listener reconnect failed; retrying");
+                            tokio::select! {
+                                _ = cancel.cancelled() => break,
+                                _ = tokio::time::sleep(Duration::from_secs(retry)) => {},
+                            }
+                            retry = (retry * 2).min(30);
+                            continue;
+                        }
+                    }
+                }
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => break,
-                    result = listener.try_recv() => result,
+                    result = listener.as_mut().expect("listener restored above").try_recv() => result,
                 };
                 match result {
                     Ok(Some(notification)) => {
@@ -117,6 +145,9 @@ impl LobbyHub {
                         hub.invalidate_all();
                     }
                     Err(error) => {
+                        // Some platform IO failures are not classified as
+                        // reconnectable by SQLx. Never retain an errored socket.
+                        listener.take();
                         tracing::warn!(%error, "Lobby listener interrupted; retrying");
                         hub.invalidate_all();
                         tokio::select! {

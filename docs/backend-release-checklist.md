@@ -1,11 +1,11 @@
 # Backend release acceptance
 
-Status as of 2026-09-24: the reviewed auth, payment retry/audit, and upload-byte
+Historical status as of 2026-09-24: the reviewed auth, payment retry/audit, and upload-byte
 defects are fixed and covered by regression tests. This is not a production
 approval. The checkout has no configured `.env` or `server/.env` with staging
 credentials, and no deployed environment was exercised.
 
-## Verified locally
+## Historical local verification (2026-09-24)
 
 - 133 unit/integration tests, including disposable PostgreSQL/Redis, local
   SMTP, provider mocks, WebSockets across instances and storage mocks.
@@ -16,6 +16,18 @@ credentials, and no deployed environment was exercised.
   wrong signed MIME/length rejected; re-encoded public PNG served; repeated
   completion idempotent; reusing a raw PUT cannot overwrite the public image.
 - Both development Compose definitions and Postman collection parse correctly.
+
+## Current session evidence (2026-10-05)
+
+146 backend tests including all ignored integration tests, formatting and strict
+Clippy pass; see `artifacts/backend-validation/summary.md`. Actual isolated API
+registration/booking/game/logout checks and a synthetic PostgreSQL dump/restore
+drill are recorded in `artifacts/fullstack/summary.md` and
+`backup-drill-evidence.json`. Mobile implementation and verification are documented
+in `mobile-readiness.md`; native release and dependency security gates remain.
+The historical Docker/audit/real-MinIO claims above were not rerun by these local
+API/backup checks. The [staging operations runbook](staging-operations.md) gives
+configuration, readiness and restore commands without claiming external acceptance.
 
 ## Required rollout order
 

@@ -233,3 +233,135 @@ async fn billing_is_private_and_active_payments_are_unique(pool: PgPool) {
     assert_eq!(split.remaining_total, 0);
     assert_eq!(split.per_player, 0);
 }
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn mixed_booking_and_game_commitments_share_one_schedule(pool: PgPool) {
+    let creator = user(&pool).await;
+    let player = user(&pool).await;
+    let (court_a, slot_a) = slot(&pool, creator).await;
+    let (court_b, slot_b) = slot(&pool, creator).await;
+    assert!(book(&pool, court_b, slot_b, creator).await);
+    let game_b = game(&pool, creator, slot_b, 6).await;
+    assert!(book(&pool, court_a, slot_a, player).await);
+    assert!(GameService::join_game(&pool, game_b, player).await.is_err());
+    CourtService::cancel_booking(&pool, court_a, slot_a, player)
+        .await
+        .unwrap();
+    GameService::join_game(&pool, game_b, player).await.unwrap();
+    assert!(!book(&pool, court_a, slot_a, player).await);
+    GameService::leave_game(&pool, game_b, player)
+        .await
+        .unwrap();
+    let (booking, joining) = tokio::join!(
+        book(&pool, court_a, slot_a, player),
+        GameService::join_game(&pool, game_b, player)
+    );
+    assert_ne!(
+        booking,
+        joining.is_ok(),
+        "only one mixed concurrent commitment may succeed"
+    );
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn adjacent_mixed_commitments_are_allowed(pool: PgPool) {
+    let creator = user(&pool).await;
+    let player = user(&pool).await;
+    let (court_a, slot_a) = slot(&pool, creator).await;
+    let (court_b, slot_b) = slot(&pool, creator).await;
+    sqlx::query("UPDATE court_slots SET start_time = (SELECT end_time FROM court_slots WHERE id = $1), end_time = (SELECT end_time + INTERVAL '1 hour' FROM court_slots WHERE id = $1) WHERE id = $2")
+        .bind(slot_b).bind(slot_a).execute(&pool).await.unwrap();
+    assert!(book(&pool, court_b, slot_b, creator).await);
+    let game_b = game(&pool, creator, slot_b, 4).await;
+    assert!(book(&pool, court_a, slot_a, player).await);
+    GameService::join_game(&pool, game_b, player).await.unwrap();
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn completed_game_keeps_its_booking_and_can_collect_remaining_balance(pool: PgPool) {
+    use pickup_server::models::game::GameStatus;
+    let creator = user(&pool).await;
+    let player = user(&pool).await;
+    let (court, slot) = slot(&pool, creator).await;
+    assert!(book(&pool, court, slot, creator).await);
+    let game = game(&pool, creator, slot, 4).await;
+    GameService::join_game(&pool, game, player).await.unwrap();
+    paid(&pool, game, creator, 300001).await;
+    GameService::update_status(&pool, game, creator, GameStatus::InProgress)
+        .await
+        .unwrap();
+    GameService::update_status(&pool, game, creator, GameStatus::Completed)
+        .await
+        .unwrap();
+    assert!(CourtService::cancel_booking(&pool, court, slot, creator)
+        .await
+        .is_err());
+    let split = BillSplitService::calculate(&pool, game).await.unwrap();
+    assert_eq!(split.remaining_total, 300000);
+    paid(&pool, game, player, 300000).await;
+    let split = BillSplitService::calculate(&pool, game).await.unwrap();
+    assert_eq!(split.paid_total, 600001);
+    assert_eq!(split.remaining_total, 0);
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn vietnam_day_boundaries_are_independent_of_database_timezone(pool: PgPool) {
+    let owner = user(&pool).await;
+    let (court, slot) = slot(&pool, owner).await;
+    sqlx::query("UPDATE court_slots SET start_time = '2030-01-01T17:00:00Z', end_time = '2030-01-01T18:00:00Z' WHERE id = $1")
+        .bind(slot).execute(&pool).await.unwrap();
+    let date = chrono::NaiveDate::from_ymd_opt(2030, 1, 2).unwrap();
+    let slots = db::courts::list_slots_by_court_and_date(&pool, court, date)
+        .await
+        .unwrap();
+    assert_eq!(slots.len(), 1);
+    let prior = db::courts::list_slots_by_court_and_date(&pool, court, date.pred_opt().unwrap())
+        .await
+        .unwrap();
+    assert!(prior.is_empty());
+    assert!(book(&pool, court, slot, owner).await);
+    let game_id = game(&pool, owner, slot, 4).await;
+    for day in [date.pred_opt().unwrap(), date, date.succ_opt().unwrap()] {
+        let expected = i64::from(day == date);
+        let all = db::games::list_games_all_joined(&pool, None, None, Some(day), 20, 0)
+            .await
+            .unwrap();
+        assert_eq!(all.len() as i64, expected);
+        if expected == 1 {
+            assert_eq!(all[0].id, game_id);
+        }
+        assert_eq!(
+            db::games::count_games_all_filtered(&pool, None, None, Some(day))
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            db::games::list_games_near_joined(
+                &pool,
+                None,
+                None,
+                Some(day),
+                10.0,
+                106.0,
+                50.0,
+                20,
+                0
+            )
+            .await
+            .unwrap()
+            .len() as i64,
+            expected
+        );
+        assert_eq!(
+            db::games::count_games_near_filtered(&pool, None, None, Some(day), 10.0, 106.0, 50.0)
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+}

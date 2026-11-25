@@ -127,18 +127,18 @@ async fn get_share_link(
 ) -> AppResult<Json<serde_json::Value>> {
     let game = GameService::get_game(&state.pool, game_id).await?;
     let sport_name = sport_display_name(game.game.sport_type);
-    let time_str = format!(
-        "{} {}",
-        game.slot.start_time.format("%l").to_string().trim(),
-        game.slot.start_time.format("%p")
-    );
+    let local_start = game
+        .slot
+        .start_time
+        .with_timezone(&chrono::FixedOffset::east_opt(7 * 3600).expect("valid Vietnam offset"));
+    let time_str = local_start.format("%H:%M").to_string();
     Ok(Json(serde_json::json!({
-        "url": format!("https://pickup.app/game/{game_id}"),
+        "url": format!("{}/game/{game_id}", state.settings.app.public_app_url.trim_end_matches('/')),
         "message": format!(
             "Join my {} game at {} on {} at {}! {}/{} spots filled.",
             sport_name,
             game.court.name,
-            game.slot.start_time.format("%b %-d"),
+            local_start.format("%d/%m"),
             time_str,
             game.players.len(),
             game.game.max_players,

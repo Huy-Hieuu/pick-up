@@ -123,6 +123,7 @@ impl PaymentService {
             crate::models::game::GameStatus::Open
                 | crate::models::game::GameStatus::Full
                 | crate::models::game::GameStatus::InProgress
+                | crate::models::game::GameStatus::Completed
         ) {
             return Err(AppError::Conflict("Game is not in a payable state".into()));
         }

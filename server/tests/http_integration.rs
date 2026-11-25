@@ -20,6 +20,69 @@ mod media;
 mod payment;
 mod realtime;
 
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn invalid_geo_queries_fail_before_database_functions(pool: PgPool) {
+    let state = state(pool.clone()).await;
+    let user: Uuid = sqlx::query_scalar("INSERT INTO users (phone) VALUES ($1) RETURNING id")
+        .bind(Uuid::new_v4().to_string()[..20].to_owned())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let sid = Uuid::new_v4();
+    sqlx::query("INSERT INTO auth_sessions (id, user_id, refresh_jti, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')").bind(sid).bind(user).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+    let token = pickup_server::extractors::auth::create_access_token(
+        user,
+        sid,
+        &state.settings.jwt.secret,
+        15,
+    )
+    .unwrap();
+    let app = build_router(state);
+    for route in ["/courts", "/games"] {
+        for query in [
+            "lat=NaN&lng=106",
+            "lat=inf&lng=106",
+            "lat=91&lng=106",
+            "lat=10&lng=-181",
+            "lat=10",
+            "lng=106",
+            "radius_km=NaN",
+            "lat=10&lng=106&radius_km=inf",
+        ] {
+            let (status, response) = call(
+                &app,
+                "GET",
+                &format!("{route}?{query}"),
+                serde_json::Value::Null,
+                Some(&token),
+            )
+            .await;
+            assert!(
+                matches!(
+                    status,
+                    StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+                ),
+                "{route}?{query}: {status} {response}"
+            );
+        }
+        for query in ["lat=90&lng=180", "lat=-90&lng=-180"] {
+            assert_eq!(
+                call(
+                    &app,
+                    "GET",
+                    &format!("{route}?{query}"),
+                    serde_json::Value::Null,
+                    Some(&token)
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+        }
+    }
+}
+
 async fn state(pool: PgPool) -> AppState {
     state_with_payment_endpoints(
         pool,
@@ -140,6 +203,175 @@ async fn call(
         status,
         serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
     )
+}
+
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis"]
+async fn personal_schedule_is_private_and_recoverable(pool: PgPool) {
+    use pickup_server::models::court::Pagination;
+    let state = state(pool.clone()).await;
+    let mut identities = Vec::new();
+    for _ in 0..2 {
+        let user: Uuid = sqlx::query_scalar("INSERT INTO users (phone) VALUES ($1) RETURNING id")
+            .bind(Uuid::new_v4().to_string()[..20].to_owned())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let sid = Uuid::new_v4();
+        sqlx::query("INSERT INTO auth_sessions (id, user_id, refresh_jti, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')").bind(sid).bind(user).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+        let token = pickup_server::extractors::auth::create_access_token(
+            user,
+            sid,
+            &state.settings.jwt.secret,
+            15,
+        )
+        .unwrap();
+        identities.push((user, token));
+    }
+    let (creator, token) = &identities[0];
+    let (stranger, stranger_token) = &identities[1];
+    let creator = *creator;
+    let stranger = *stranger;
+    let court: Uuid = sqlx::query_scalar("INSERT INTO courts (name, sport_type, lat, lng, address, price_per_slot, owner_id) VALUES ('Schedule', 'pickleball', 10, 106, 'Test', 600001, $1) RETURNING id").bind(creator).fetch_one(&pool).await.unwrap();
+    let slot: Uuid = sqlx::query_scalar("INSERT INTO court_slots (court_id, start_time, end_time) VALUES ($1, now() + interval '1 day', now() + interval '25 hours') RETURNING id").bind(court).fetch_one(&pool).await.unwrap();
+    pickup_server::services::CourtService::book_slot(
+        &pool,
+        court,
+        slot,
+        creator,
+        pickup_server::models::court::BookSlotRequest {},
+    )
+    .await
+    .unwrap();
+    let game = pickup_server::services::GameService::create_game(
+        &pool,
+        creator,
+        pickup_server::models::game::CreateGameRequest {
+            court_slot_id: slot,
+            sport_type: pickup_server::models::court::SportType::Pickleball,
+            max_players: 4,
+            description: None,
+        },
+    )
+    .await
+    .unwrap()
+    .game
+    .id;
+    let app = build_router(state);
+    sqlx::query("UPDATE court_slots SET start_time = '2030-01-01T12:00:00Z', end_time = '2030-01-01T13:00:00Z' WHERE id = $1").bind(slot).execute(&pool).await.unwrap();
+    let (status, share) = call(
+        &app,
+        "GET",
+        &format!("/games/{game}/share"),
+        serde_json::Value::Null,
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(share["url"], format!("https://app.example.com/game/{game}"));
+    assert!(share["message"]
+        .as_str()
+        .unwrap()
+        .contains("01/01 at 19:00"));
+    let (status, bookings) = call(
+        &app,
+        "GET",
+        "/auth/me/bookings",
+        serde_json::Value::Null,
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bookings["total"], 1);
+    assert_eq!(bookings["bookings"][0]["game_id"], game.to_string());
+    assert_eq!(bookings["bookings"][0]["booked_by"], creator.to_string());
+    let (_, games) = call(
+        &app,
+        "GET",
+        "/auth/me/games",
+        serde_json::Value::Null,
+        Some(token),
+    )
+    .await;
+    assert_eq!(games["total"], 1);
+    assert_eq!(games["games"][0]["id"], game.to_string());
+    for path in ["/auth/me/bookings", "/auth/me/games"] {
+        assert_eq!(
+            call(&app, "GET", path, serde_json::Value::Null, None)
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        let (_, private) = call(
+            &app,
+            "GET",
+            path,
+            serde_json::Value::Null,
+            Some(stranger_token),
+        )
+        .await;
+        assert_eq!(private["total"], 0);
+    }
+    pickup_server::services::GameService::join_game(&pool, game, stranger)
+        .await
+        .unwrap();
+    let joined = pickup_server::services::schedule::games(
+        &pool,
+        stranger,
+        Pagination {
+            page: None,
+            per_page: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(joined.total, 1);
+    pickup_server::services::GameService::leave_game(&pool, game, stranger)
+        .await
+        .unwrap();
+    assert_eq!(
+        pickup_server::services::schedule::games(
+            &pool,
+            stranger,
+            Pagination {
+                page: None,
+                per_page: None
+            }
+        )
+        .await
+        .unwrap()
+        .total,
+        0
+    );
+    pickup_server::services::GameService::cancel_game(&pool, game, creator)
+        .await
+        .unwrap();
+    let history = pickup_server::services::schedule::games(
+        &pool,
+        creator,
+        Pagination {
+            page: None,
+            per_page: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(history.total, 1);
+    assert_eq!(
+        history.games[0].status,
+        pickup_server::models::game::GameStatus::Cancelled
+    );
+    let bookings = pickup_server::services::schedule::bookings(
+        &pool,
+        creator,
+        Pagination {
+            page: None,
+            per_page: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(bookings.bookings.is_empty());
 }
 
 #[sqlx::test]
@@ -485,10 +717,30 @@ async fn revoked_sessions_fail_in_middleware_and_fallback_extractor(pool: PgPool
         .0,
         StatusCode::OK
     );
-    sqlx::query("DELETE FROM auth_sessions")
-        .execute(&pool)
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/auth/logout",
+            serde_json::json!({}),
+            Some(token)
+        )
         .await
-        .unwrap();
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/auth/refresh",
+            serde_json::json!({"refresh_token": auth["refresh_token"]}),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
     assert_eq!(
         call(
             &app,

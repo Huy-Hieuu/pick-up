@@ -1,0 +1,38 @@
+
+  GitNexus Detect Changes (1.6.12)
+{"level":40,"time":1791182905593,"name":"gitnexus","msg":"GitNexus: FTS extension unavailable; continuing without FTS features. load-only policy (no install attempted); LOAD fts failed: IO exception: Failed to load library: C:\\Users\\tonminh123/.lbdb/extension/0.18.1/win_amd64/fts/libfts.lbug_extension which is needed by extension: fts. Error: The specified module could not be found. ."}
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/config/settings.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/db/games.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/jobs/email.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/models/query.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/routes/auth.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/routes/games.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/services/auth.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/src/services/auth_security.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/tests/auth_integration.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/tests/billing_booking_integration.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/tests/http_integration.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/tests/payment/mod.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/tests/realtime/mod.rs', LF will be replaced by CRLF the next time Git touches it
+Changes: 22 files, 65 symbols
+Affected processes: 0
+Risk level: low
+
+Changed symbols:
+  Impl Settings → server/src/config/settings.rs
+  Function from_env → server/src/config/settings.rs
+  Function parse_cors_origins → server/src/config/settings.rs
+  Module cors_configuration_tests → server/src/config/settings.rs
+  Function accepts_exact_origins_and_explicit_development_wildcard → server/src/config/settings.rs
+  Function rejects_invalid_or_ambiguous_browser_origins → server/src/config/settings.rs
+  Function list_slots_by_court_and_date → server/src/db/courts.rs
+  Function has_overlapping_booking_tx → server/src/db/courts.rs
+  Function list_games_all_joined → server/src/db/games.rs
+  Function list_games_near_joined → server/src/db/games.rs
+  Function count_games_all_filtered → server/src/db/games.rs
+  Function count_games_near_filtered → server/src/db/games.rs
+  Function has_overlapping_game_tx → server/src/db/games.rs
+  Function has_active_game_for_slot_tx → server/src/db/games.rs
+  Function insert_game → server/src/db/games.rs
+... and 50 more

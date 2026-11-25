@@ -288,10 +288,6 @@ async fn handle_socket(
                 false
             }
             _ = recheck.tick() => true,
-            changed = subscription.changed() => {
-                if changed.is_err() { break; }
-                true
-            }
             message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Pong(data))) => {
@@ -309,6 +305,13 @@ async fn handle_socket(
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 }
                 false
+            }
+            // Drain queued control frames before another coalesced invalidation.
+            // Otherwise a continuously ready notification stream hides Pongs
+            // until the heartbeat timeout closes a healthy connection.
+            changed = subscription.changed() => {
+                if changed.is_err() { break; }
+                true
             }
         };
         if refresh {

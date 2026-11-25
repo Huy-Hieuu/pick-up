@@ -27,6 +27,47 @@ use uuid::Uuid;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+#[sqlx::test]
+#[ignore = "requires disposable PostgreSQL and Redis; 70-second heartbeat stress"]
+async fn continuous_invalidations_do_not_starve_control_frames(pool: PgPool) {
+    let api = Api::start(pool.clone()).await;
+    let (creator, token, _) = player(&api).await;
+    let game = game(&api, creator).await;
+    let mut socket = api.connect(game, &token).await;
+    event(&mut socket).await;
+    let publisher = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            interval.tick().await;
+            sqlx::query("SELECT pg_notify('pickup_game_changed', $1)")
+                .bind(game.to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    });
+    let result = tokio::time::timeout(Duration::from_secs(70), async {
+        let mut pings = 0;
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Ping(data))) => {
+                    pings += 1;
+                    socket.send(Message::Pong(data)).await.unwrap();
+                }
+                Some(Ok(Message::Text(_))) => {}
+                other => return (pings, format!("{other:?}")),
+            }
+        }
+    })
+    .await;
+    publisher.abort();
+    assert!(
+        result.is_err(),
+        "healthy connection closed under continuous invalidations: {result:?}"
+    );
+    socket.close(None).await.unwrap();
+}
+
 struct Api {
     state: AppState,
     address: std::net::SocketAddr,

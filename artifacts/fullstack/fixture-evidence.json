@@ -1,0 +1,14 @@
+{
+  "court_ids": [
+    "10000000-0000-4000-8000-000000000001",
+    "10000000-0000-4000-8000-000000000002",
+    "10000000-0000-4000-8000-000000000003"
+  ],
+  "owner_user_id": "a64e3c79-7acc-48dc-87f6-f2bdff750bf4",
+  "profile_name": "Minh Nguyen",
+  "slot_id": "f584a5d8-8590-4cea-981d-f0f4200f2bd8",
+  "game_count": 1,
+  "preview_user_id": "65e45978-6415-4dd0-8155-5f74c68f75f1",
+  "game_id": "6dbfea83-c018-4214-81d0-b1f7b48fefde",
+  "court_count": 3
+}

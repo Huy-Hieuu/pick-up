@@ -1,0 +1,14 @@
+{
+  "payment_unconfigured_status": 501,
+  "joined_player_count": 2,
+  "personal_bookings_count": 1,
+  "cancelled_status": "available",
+  "revoked_access_status": 401,
+  "revoked_refresh_status": 401,
+  "booked_status": "booked",
+  "split_total": 360000,
+  "logout_status": 204,
+  "personal_game_count": 1,
+  "registered_verified": true,
+  "split_players": 2
+}

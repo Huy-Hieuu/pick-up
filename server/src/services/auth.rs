@@ -25,6 +25,15 @@ fn registration_pending(email: String, expires_in: i64) -> RegistrationPending {
 }
 
 impl AuthService {
+    pub async fn logout(pool: &PgPool, user_id: Uuid, session_id: Uuid) -> AppResult<()> {
+        sqlx::query("DELETE FROM auth_sessions WHERE id = $1 AND user_id = $2")
+            .bind(session_id)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn send_otp(
         pool: &PgPool,
         redis: &ConnectionManager,
@@ -336,7 +345,9 @@ impl AuthService {
         redis: &ConnectionManager,
         req: SetNewPasswordRequest,
     ) -> AppResult<SetNewPasswordResponse> {
-        let grant: Option<String> = redis::cmd("GETDEL")
+        // Validate the grant without consuming it before bounded password work.
+        // A busy worker returns 429 with the same grant still available to retry.
+        let grant: Option<String> = redis::cmd("GET")
             .arg(format!("reset_token:{}", req.reset_token))
             .query_async(&mut redis.clone())
             .await
@@ -346,6 +357,16 @@ impl AuthService {
         let (user_id, previous_hash): (Uuid, Option<String>) = serde_json::from_str(&grant)
             .map_err(|_| AppError::Unauthorized("Invalid reset token".into()))?;
         let password_hash = super::auth_security::hash_password(req.new_password).await?;
+        let consumed: Option<String> = redis::cmd("GETDEL")
+            .arg(format!("reset_token:{}", req.reset_token))
+            .query_async(&mut redis.clone())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        if consumed.as_deref() != Some(grant.as_str()) {
+            return Err(AppError::Unauthorized(
+                "Invalid or expired reset token".into(),
+            ));
+        }
         let mut tx = pool.begin().await?;
         let changed = sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1 AND password_hash IS NOT DISTINCT FROM $3")
             .bind(user_id).bind(password_hash).bind(previous_hash).execute(&mut *tx).await?.rows_affected();

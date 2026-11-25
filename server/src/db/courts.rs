@@ -142,8 +142,8 @@ pub async fn list_slots_by_court_and_date(
         SELECT id, court_id, start_time, end_time, status, booked_by, created_at
         FROM court_slots
         WHERE court_id = $1
-          AND start_time >= $2
-          AND start_time < $2 + INTERVAL '1 day'
+          AND start_time >= ($2::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+          AND start_time < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
         ORDER BY start_time
         "#,
     )
@@ -193,7 +193,9 @@ pub async fn update_slot_status(
     .await
 }
 
-/// Check if user has an overlapping booking.
+/// One scheduling invariant for booked slots and active game memberships.
+/// The caller holds the user row lock; intervals are half-open and the target
+/// slot is excluded so a booker can create a game for their own reservation.
 pub async fn has_overlapping_booking_tx(
     conn: &mut sqlx::PgConnection,
     user_id: Uuid,
@@ -210,6 +212,13 @@ pub async fn has_overlapping_booking_tx(
               AND status = 'booked'
               AND start_time < $4
               AND end_time > $3
+            UNION ALL
+            SELECT 1 FROM game_players gp
+            JOIN games g ON g.id = gp.game_id
+            JOIN court_slots cs ON cs.id = g.court_slot_id
+            WHERE gp.user_id = $1 AND cs.id != $2
+              AND g.status IN ('open', 'full', 'in_progress')
+              AND cs.start_time < $4 AND cs.end_time > $3
         )
         "#,
     )

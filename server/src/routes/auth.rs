@@ -46,7 +46,11 @@ pub fn public_router() -> Router<AppState> {
 
 /// Protected auth routes — require_auth middleware applied.
 pub fn protected_router() -> Router<AppState> {
-    Router::new().route("/me", get(get_me).patch(update_me))
+    Router::new()
+        .route("/me", get(get_me).patch(update_me))
+        .route("/logout", post(logout))
+        .route("/me/bookings", get(get_bookings))
+        .route("/me/games", get(get_games))
 }
 
 /// `POST /auth/otp` — request a 6-digit OTP via email.
@@ -235,4 +239,34 @@ async fn update_me(
     let profile =
         crate::services::AuthService::update_profile(&state.pool, auth.user_id(), req).await?;
     Ok(Json(profile))
+}
+
+/// Recover the caller's retained slot reservations after an app restart.
+async fn get_bookings(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    axum::extract::Query(query): axum::extract::Query<crate::models::court::Pagination>,
+) -> AppResult<Json<crate::services::schedule::BookingPage>> {
+    Ok(Json(
+        crate::services::schedule::bookings(&state.pool, auth.user_id(), query).await?,
+    ))
+}
+
+async fn get_games(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    axum::extract::Query(query): axum::extract::Query<crate::models::court::Pagination>,
+) -> AppResult<Json<crate::models::game::GameListResponse>> {
+    Ok(Json(
+        crate::services::schedule::games(&state.pool, auth.user_id(), query).await?,
+    ))
+}
+
+/// Revoke only the authenticated session, including all its access/refresh tokens.
+async fn logout(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<axum::http::StatusCode> {
+    crate::services::AuthService::logout(&state.pool, auth.user_id(), auth.claims().sid).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

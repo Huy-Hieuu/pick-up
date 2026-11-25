@@ -90,8 +90,10 @@ impl Pagination {
 pub struct ListCourtsQuery {
     pub sport_type: Option<SportType>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
+    #[validate(range(min = -90.0, max = 90.0))]
     pub lat: Option<f64>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
+    #[validate(range(min = -180.0, max = 180.0))]
     pub lng: Option<f64>,
     #[serde(default, deserialize_with = "query::deserialize_f64_from_str")]
     #[validate(range(
